@@ -1,6 +1,19 @@
+[workspace]
+members = [
+    ".",
+    "partial-date-tests",
+]
+resolver = "2"
+
 [package]
 name = "partial-date"
 version = "0.1.0"
 edition = "2024"
+description = "Deterministic partial date extraction from natural language text, with sensible defaults and extensive configurability."
+license = "GPL-3.0-only"
+repository = "https://github.com/dylanbr0wn/partial-date"
+keywords = ["date", "parsing", "partial-date", "extraction", "nlp"]
+categories = ["parsing", "date-and-time", "text-processing"]
+readme = "README.md"
 
 [dependencies]
