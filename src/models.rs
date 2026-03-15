@@ -31,7 +31,8 @@ pub struct Day {
 
 /// Extracted month component (1–12).
 pub struct Month {
-    pub value: Extracted<u8>,
+    pub number: Extracted<u8>,
+    pub name: Extracted<MonthName>
 }
 
 /// Extracted year component.
@@ -222,4 +223,19 @@ pub struct Input {
     pub utterance: String,
     /// Per-call config override. Falls back to the library default when `None`.
     pub config: Option<Config>,
+}
+
+pub enum MonthName {
+    January,
+    February,
+    March,
+    April,
+    May,
+    June,
+    July,
+    August,
+    September,
+    October,
+    November,
+    December
 }
