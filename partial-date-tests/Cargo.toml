@@ -6,3 +6,4 @@ publish = false
 
 [dev-dependencies]
 partial-date = { path = ".." }
+rstest = "0.25"
