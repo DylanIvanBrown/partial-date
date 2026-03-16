@@ -4,6 +4,7 @@
 //! components from a raw input string.
 
 use crate::models::{Config, Day, Extracted, Input, Month, MonthName, PartialDate, Token, Year};
+use std::convert::TryFrom;
 
 /// Extract a partial date from the given input.
 ///
@@ -13,7 +14,12 @@ use crate::models::{Config, Day, Extracted, Input, Month, MonthName, PartialDate
 pub fn extract(input: Input) -> PartialDate {
     let _config = input.config.unwrap_or_default();
     let _extractor = PartialDateExtractor::new(_config);
-    // TODO: use _extractor.component_order to drive positional parsing
+    // TODO: try each extraction method until we have as complete a partial date extraction as possible
+    // Try these in order of complexity
+    // Tokenise first
+    // then try parse the tokens
+    // Simple number check against format when 3 numeric values are returned, or 2 numeric and 1 ordinal
+    // Then try extract with more fuzzy options like levenshtein distance/ratio
 
     // Temp partial date to return
     PartialDate {
@@ -67,35 +73,35 @@ pub fn extract(input: Input) -> PartialDate {
 ///
 /// ```
 /// use partial_date::extract::tokenise;
-/// use partial_date::models::Token;
+/// use partial_date::models::{MonthName, Token};
 ///
 /// assert_eq!(
 ///     tokenise("19 October 2014", &[]),
 ///     vec![
-///         Token::Numeric("19"),
-///         Token::MonthName("October"),
-///         Token::Numeric("2014"),
+///         Token::Numeric(19),
+///         Token::MonthName(MonthName::October),
+///         Token::Numeric(2014),
 ///     ]
 /// );
 ///
 /// assert_eq!(
 ///     tokenise("19th October,2015", &[]),
 ///     vec![
-///         Token::OrdinalDay("19th"),
-///         Token::MonthName("October"),
-///         Token::Numeric("2015"),
+///         Token::OrdinalDay(19),
+///         Token::MonthName(MonthName::October),
+///         Token::Numeric(2015),
 ///     ]
 /// );
 ///
 /// assert_eq!(
 ///     tokenise("19october", &[]),
 ///     vec![
-///         Token::Numeric("19"),
-///         Token::MonthName("october"),
+///         Token::Numeric(19),
+///         Token::MonthName(MonthName::October),
 ///     ]
 /// );
 /// ```
-pub fn tokenise<'a>(utterance: &'a str, extra_separators: &[String]) -> Vec<Token<'a>> {
+pub fn tokenise(utterance: &str, extra_separators: &[String]) -> Vec<Token> {
     // Collect single-char separators (standard + single-char extras).
     // Multi-char extras are handled as substring boundaries below.
     const STANDARD_SEPS: &[char] = &[' ', '\t', '\n', '\r', '/', '-', '.', ',', '\\'];
@@ -125,7 +131,7 @@ pub fn tokenise<'a>(utterance: &'a str, extra_separators: &[String]) -> Vec<Toke
 
     // For each raw chunk, sub-split on digit↔alpha boundaries, classify each
     // sub-chunk, and collect up to 3 meaningful tokens.
-    let mut tokens: Vec<Token<'a>> = Vec::with_capacity(3);
+    let mut tokens: Vec<Token> = Vec::with_capacity(3);
 
     'outer: for chunk in raw_chunks {
         // Skip chunks that contain no alphanumeric characters (stray
@@ -217,8 +223,8 @@ fn merge_ranges(sorted: Vec<SepRange>) -> Vec<SepRange> {
 }
 
 /// Return slices of `utterance` that lie *between* the separator ranges.
-fn spans_between_separators<'a>(utterance: &'a str, sep_ranges: &[SepRange]) -> Vec<&'a str> {
-    let mut spans: Vec<&'a str> = Vec::new();
+fn spans_between_separators<'u>(utterance: &'u str, sep_ranges: &[SepRange]) -> Vec<&'u str> {
+    let mut spans: Vec<&'u str> = Vec::new();
     let mut pos = 0usize;
 
     for sep in sep_ranges {
@@ -285,7 +291,7 @@ fn sub_split_on_boundary(chunk: &str) -> Vec<&str> {
 // ---------------------------------------------------------------------------
 
 /// Classify a single sub-chunk as a [`Token`], or return `None` for noise.
-fn classify(sub: &str) -> Option<Token<'_>> {
+fn classify(sub: &str) -> Option<Token> {
     if sub.is_empty() {
         return None;
     }
@@ -295,23 +301,24 @@ fn classify(sub: &str) -> Option<Token<'_>> {
         return Some(token);
     }
 
-    // Pure numeric.
+    // Pure numeric — parse directly to i16.
     if sub.chars().all(|c| c.is_ascii_digit()) {
-        return Some(Token::Numeric(sub));
+        return sub.parse::<i16>().ok().map(Token::Numeric);
     }
 
-    // Month name (full, abbreviated, or unambiguous prefix).
-    if MonthName::try_from(sub).is_ok() {
-        return Some(Token::MonthName(sub));
+    // Month name (full, abbreviated, unambiguous prefix, or fuzzy match).
+    if let Ok(month) = MonthName::try_from(sub) {
+        return Some(Token::MonthName(month));
     }
 
     // Noise — discard.
     None
 }
 
-/// Return `Some(Token::OrdinalDay(sub))` if `sub` is a digit run followed by
-/// `st`, `nd`, `rd`, or `th` (case-insensitive), `None` otherwise.
-fn try_classify_ordinal(sub: &str) -> Option<Token<'_>> {
+/// Return `Some(Token::OrdinalDay(n))` if `sub` is a digit run followed by
+/// `st`, `nd`, `rd`, or `th` (case-insensitive), where `n` is the parsed day
+/// number with the suffix stripped. Returns `None` otherwise.
+fn try_classify_ordinal(sub: &str) -> Option<Token> {
     // Find where the leading digit run ends.
     let digit_end = sub
         .char_indices()
@@ -326,7 +333,10 @@ fn try_classify_ordinal(sub: &str) -> Option<Token<'_>> {
     let suffix_lower = suffix.to_ascii_lowercase();
 
     match suffix_lower.as_str() {
-        "st" | "nd" | "rd" | "th" => Some(Token::OrdinalDay(sub)),
+        "st" | "nd" | "rd" | "th" => {
+            let n = sub[..digit_end].parse::<u8>().ok()?;
+            Some(Token::OrdinalDay(n))
+        }
         _ => None,
     }
 }

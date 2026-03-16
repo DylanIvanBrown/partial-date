@@ -688,20 +688,23 @@ fn fuzzy_match_month(lower: &str) -> Result<MonthName, MonthNameError> {
 
 /// A single meaningful chunk produced by [`crate::extract::tokenise`].
 ///
-/// Each variant carries the raw source slice from the utterance so that
-/// callers retain full context without extra allocation.
-///
 /// The tokeniser strips separator characters and noise words, leaving only
 /// tokens that *could* contribute to a date component. At most three tokens
 /// are returned (one per date component: day, month, year).
+///
+/// Each variant stores the already-parsed value rather than the raw source
+/// text, so consumers can use the token directly without re-parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Token<'a> {
-    /// A run of ASCII digits, e.g. `"19"`, `"2014"`, `"06"`.
-    Numeric(&'a str),
-    /// A number immediately followed by an ordinal suffix (`st`, `nd`, `rd`,
-    /// or `th`, case-insensitive), e.g. `"19th"`, `"1st"`, `"3RD"`.
-    OrdinalDay(&'a str),
-    /// A word that matches a known month name (full, abbreviated, or
-    /// unambiguous prefix), e.g. `"october"`, `"Jan"`, `"Septem"`.
-    MonthName(&'a str),
+pub enum Token {
+    /// A parsed integer, e.g. `19`, `2014`, `6`.
+    ///
+    /// Uses `i16` because the full year range required by the spec (0–3000)
+    /// fits within `i16::MAX` (32,767), and day/month values are far smaller.
+    Numeric(i16),
+    /// The numeric day extracted from an ordinal like `"19th"` or `"1st"`,
+    /// with the suffix already stripped.
+    OrdinalDay(u8),
+    /// A resolved [`MonthName`] variant, matched from a full name,
+    /// abbreviation, unambiguous prefix, or fuzzy misspelling.
+    MonthName(MonthName),
 }
