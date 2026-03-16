@@ -20,4 +20,5 @@
 //! ```
 
 pub mod extract;
+pub mod levenshtein;
 pub mod models;

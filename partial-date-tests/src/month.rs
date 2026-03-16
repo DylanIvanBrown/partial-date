@@ -89,6 +89,33 @@ fn month_full_names(
     assert_eq!(result.month.name, Extracted::Found(expected_name));
 }
 
+/// Full month names should be extracted and mapped to the correct number
+/// and MonthName even when misspelled.
+#[rstest]
+#[case("Jauary", 1, MonthName::January)]
+#[case("Febuary", 2, MonthName::February)]
+#[case("Marsh", 3, MonthName::March)]
+#[case("Apriil", 4, MonthName::April)]
+#[case("Mey", 5, MonthName::May)]
+#[case("Juune", 6, MonthName::June)]
+#[case("Juli", 7, MonthName::July)]
+#[case("Agust", 8, MonthName::August)]
+#[case("Septeber", 9, MonthName::September)]
+#[case("Ocober", 10, MonthName::October)]
+#[case("novmber", 11, MonthName::November)]
+#[case("Decemer", 12, MonthName::December)]
+fn month_full_names_misspelled(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
 /// Full month names should be case-insensitive.
 #[rstest]
 #[case("january", 1)]

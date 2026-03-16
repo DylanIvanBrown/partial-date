@@ -7,9 +7,15 @@ mod day;
 #[cfg(test)]
 mod full_date;
 #[cfg(test)]
+mod levenshtein;
+#[cfg(test)]
 mod month;
 #[cfg(test)]
+mod month_name;
+#[cfg(test)]
 mod partial_date;
+#[cfg(test)]
+mod tokenise;
 #[cfg(test)]
 mod year;
 

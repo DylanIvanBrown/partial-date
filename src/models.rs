@@ -423,6 +423,32 @@ pub struct Input {
 }
 
 /// The name of a calendar month, as extracted from natural language input.
+///
+/// ## Conversions
+///
+/// `MonthName` can be constructed from either a string or a number:
+///
+/// ```
+/// use partial_date::models::{MonthName, MonthNameError};
+/// use std::convert::TryFrom;
+///
+/// // From a name string (full, abbreviated, or unambiguous prefix)
+/// assert_eq!(MonthName::try_from("October"), Ok(MonthName::October));
+/// assert_eq!(MonthName::try_from("oct"),     Ok(MonthName::October));
+/// assert_eq!(MonthName::try_from("Octo"),    Ok(MonthName::October));
+///
+/// // From a numeric string
+/// assert_eq!(MonthName::try_from("10"), Ok(MonthName::October));
+///
+/// // From a u8
+/// assert_eq!(MonthName::try_from(10_u8), Ok(MonthName::October));
+///
+/// // Errors
+/// assert_eq!(MonthName::try_from(0_u8),  Err(MonthNameError::NumberOutOfRange(0)));
+/// assert_eq!(MonthName::try_from(13_u8), Err(MonthNameError::NumberOutOfRange(13)));
+/// assert_eq!(MonthName::try_from("Xyz"), Err(MonthNameError::UnrecognisedName));
+/// assert_eq!(MonthName::try_from("5x"),  Err(MonthNameError::NotAMonth));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonthName {
     January,
@@ -437,4 +463,245 @@ pub enum MonthName {
     October,
     November,
     December,
+}
+
+impl MonthName {
+    /// Return the calendar number of this month (1 = January … 12 = December).
+    ///
+    /// ```
+    /// use partial_date::models::MonthName;
+    /// assert_eq!(MonthName::January.number(), 1);
+    /// assert_eq!(MonthName::December.number(), 12);
+    /// ```
+    pub fn number(self) -> u8 {
+        match self {
+            MonthName::January => 1,
+            MonthName::February => 2,
+            MonthName::March => 3,
+            MonthName::April => 4,
+            MonthName::May => 5,
+            MonthName::June => 6,
+            MonthName::July => 7,
+            MonthName::August => 8,
+            MonthName::September => 9,
+            MonthName::October => 10,
+            MonthName::November => 11,
+            MonthName::December => 12,
+        }
+    }
+}
+
+/// Errors returned when a [`MonthName`] conversion fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MonthNameError {
+    /// The input string was alphabetic but did not match any known month name,
+    /// abbreviation, or unambiguous prefix.
+    UnrecognisedName,
+    /// The input was a valid integer but outside the range 1–12.
+    NumberOutOfRange(u8),
+    /// The input was neither a pure alphabetic string nor a pure integer
+    /// (e.g. `"5x"` or `"jan2"`).
+    NotAMonth,
+}
+
+/// Convert a month number (`1` = January … `12` = December) into a
+/// [`MonthName`].
+///
+/// Returns [`MonthNameError::NumberOutOfRange`] for any value outside 1–12.
+impl TryFrom<u8> for MonthName {
+    type Error = MonthNameError;
+
+    fn try_from(n: u8) -> Result<Self, Self::Error> {
+        match n {
+            1 => Ok(MonthName::January),
+            2 => Ok(MonthName::February),
+            3 => Ok(MonthName::March),
+            4 => Ok(MonthName::April),
+            5 => Ok(MonthName::May),
+            6 => Ok(MonthName::June),
+            7 => Ok(MonthName::July),
+            8 => Ok(MonthName::August),
+            9 => Ok(MonthName::September),
+            10 => Ok(MonthName::October),
+            11 => Ok(MonthName::November),
+            12 => Ok(MonthName::December),
+            _ => Err(MonthNameError::NumberOutOfRange(n)),
+        }
+    }
+}
+
+/// Convert a string into a [`MonthName`].
+///
+/// Three strategies are tried in order:
+///
+/// 1. **Alphabetic match** — if every character is ASCII alphabetic (after
+///    stripping a trailing `.`), the lowercased string is compared against all
+///    full names, standard 3-letter abbreviations, and unambiguous longer
+///    prefixes.
+///
+/// 2. **Fuzzy match** — if no exact or prefix match was found, the
+///    Levenshtein ratio is computed against every full month name.  The
+///    closest match is accepted when its ratio is ≥ 0.6 and it is
+///    unambiguously the best candidate (no tie).  Returns
+///    [`MonthNameError::UnrecognisedName`] when no candidate passes.
+///
+/// 3. **Numeric match** — if every character is an ASCII digit, the value is
+///    parsed as a `u8` and forwarded to [`TryFrom<u8>`].  Returns
+///    [`MonthNameError::NumberOutOfRange`] when the number is outside 1–12.
+///
+/// If the string is neither purely alphabetic nor purely numeric (e.g.
+/// `"jan2"` or `"5x"`), [`MonthNameError::NotAMonth`] is returned.
+impl TryFrom<&str> for MonthName {
+    type Error = MonthNameError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        // Strip a trailing dot before classification (handles "Jan.", "Feb.").
+        let s = s.strip_suffix('.').unwrap_or(s);
+
+        if s.is_empty() {
+            return Err(MonthNameError::NotAMonth);
+        }
+
+        if s.chars().all(|c| c.is_ascii_alphabetic()) {
+            // --- Alphabetic path ---
+            let lower = s.to_ascii_lowercase();
+            match_month_name_str(lower.as_str())
+        } else if s.chars().all(|c| c.is_ascii_digit()) {
+            // --- Numeric path ---
+            // A leading-zero number like "06" parses to 6, which is valid.
+            // Values > 255 would overflow u8::MAX; treat them as out-of-range.
+            let n: u8 = s.parse().map_err(|_| MonthNameError::NumberOutOfRange(0))?;
+            MonthName::try_from(n)
+        } else {
+            Err(MonthNameError::NotAMonth)
+        }
+    }
+}
+
+/// All twelve full month names paired with their [`MonthName`] variant,
+/// used for both prefix and fuzzy matching.
+const FULL_MONTH_NAMES: &[(&str, MonthName)] = &[
+    ("january", MonthName::January),
+    ("february", MonthName::February),
+    ("march", MonthName::March),
+    ("april", MonthName::April),
+    ("may", MonthName::May),
+    ("june", MonthName::June),
+    ("july", MonthName::July),
+    ("august", MonthName::August),
+    ("september", MonthName::September),
+    ("october", MonthName::October),
+    ("november", MonthName::November),
+    ("december", MonthName::December),
+];
+
+/// Minimum Levenshtein ratio required for a fuzzy match to be accepted.
+///
+/// A ratio of 0.6 means at most 2 edits in a 5-character word, or 1 edit in
+/// a 3-character word.  Empirically this passes all known real-world
+/// misspellings while rejecting clearly unrelated words like `"Foo"` or
+/// `"Friday"`.
+const FUZZY_MATCH_THRESHOLD: f32 = 0.6;
+
+/// Match an already-lowercased, purely-alphabetic string against all known
+/// month names, abbreviations, and unambiguous prefixes, falling back to
+/// fuzzy (Levenshtein ratio) matching when no exact or prefix match is found.
+fn match_month_name_str(lower: &str) -> Result<MonthName, MonthNameError> {
+    // --- 1. Exact match: full names and standard 3-letter abbreviations ---
+    let exact = match lower {
+        "january" | "jan" => Some(MonthName::January),
+        "february" | "feb" => Some(MonthName::February),
+        "march" | "mar" => Some(MonthName::March),
+        "april" | "apr" => Some(MonthName::April),
+        "may" => Some(MonthName::May),
+        "june" | "jun" => Some(MonthName::June),
+        "july" | "jul" => Some(MonthName::July),
+        "august" | "aug" => Some(MonthName::August),
+        "september" | "sep" => Some(MonthName::September),
+        "october" | "oct" => Some(MonthName::October),
+        "november" | "nov" => Some(MonthName::November),
+        "december" | "dec" => Some(MonthName::December),
+        _ => None,
+    };
+
+    if let Some(month) = exact {
+        return Ok(month);
+    }
+
+    // --- 2. Unambiguous prefix match (≥ 4 characters) ---
+    if lower.len() >= 4 {
+        let mut found: Option<MonthName> = None;
+        for (full_name, variant) in FULL_MONTH_NAMES {
+            if full_name.starts_with(lower) {
+                if found.is_some() {
+                    // More than one month starts with this prefix — ambiguous;
+                    // fall through to fuzzy matching below.
+                    found = None;
+                    break;
+                }
+                found = Some(*variant);
+            }
+        }
+        if let Some(month) = found {
+            return Ok(month);
+        }
+    }
+
+    // --- 3. Fuzzy match via Levenshtein ratio ---
+    fuzzy_match_month(lower)
+}
+
+/// Find the best-matching month name for `lower` using Levenshtein ratio.
+///
+/// Returns the matched [`MonthName`] if exactly one candidate scores above
+/// [`FUZZY_MATCH_THRESHOLD`] and no other candidate ties it.  Returns
+/// [`MonthNameError::UnrecognisedName`] otherwise.
+fn fuzzy_match_month(lower: &str) -> Result<MonthName, MonthNameError> {
+    use crate::levenshtein::levenshtein_ratio;
+
+    let mut best_ratio: f32 = 0.0;
+    let mut best_month: Option<MonthName> = None;
+    let mut is_tied = false;
+
+    for (full_name, variant) in FULL_MONTH_NAMES {
+        let ratio = levenshtein_ratio(lower, full_name);
+        if ratio > best_ratio {
+            best_ratio = ratio;
+            best_month = Some(*variant);
+            is_tied = false;
+        } else if (ratio - best_ratio).abs() < f32::EPSILON {
+            // Two candidates have the same ratio — ambiguous.
+            is_tied = true;
+        }
+    }
+
+    if best_ratio >= FUZZY_MATCH_THRESHOLD && !is_tied {
+        best_month.ok_or(MonthNameError::UnrecognisedName)
+    } else {
+        Err(MonthNameError::UnrecognisedName)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tokenisation types
+// ---------------------------------------------------------------------------
+
+/// A single meaningful chunk produced by [`crate::extract::tokenise`].
+///
+/// Each variant carries the raw source slice from the utterance so that
+/// callers retain full context without extra allocation.
+///
+/// The tokeniser strips separator characters and noise words, leaving only
+/// tokens that *could* contribute to a date component. At most three tokens
+/// are returned (one per date component: day, month, year).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Token<'a> {
+    /// A run of ASCII digits, e.g. `"19"`, `"2014"`, `"06"`.
+    Numeric(&'a str),
+    /// A number immediately followed by an ordinal suffix (`st`, `nd`, `rd`,
+    /// or `th`, case-insensitive), e.g. `"19th"`, `"1st"`, `"3RD"`.
+    OrdinalDay(&'a str),
+    /// A word that matches a known month name (full, abbreviated, or
+    /// unambiguous prefix), e.g. `"october"`, `"Jan"`, `"Septem"`.
+    MonthName(&'a str),
 }
