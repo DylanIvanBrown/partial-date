@@ -380,32 +380,13 @@ impl Default for ComponentOrder {
     }
 }
 
-/// A field separator that may appear between date components.
-///
-/// The extractor will attempt all separator variants automatically; this field
-/// is used to weight the primary (expected) separator more heavily.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum Separator {
-    /// `-`
-    Dash,
-    /// ASCII whitespace
-    Space,
-    /// `/`
-    #[default]
-    ForwardSlash,
-    /// `\`
-    BackSlash,
-    /// `.`
-    Dot,
-    /// `,`
-    Comma,
-    /// No separator, e.g. `011224` or `19941231`.
-    NoSeparator,
-    /// A custom separator string.
-    Other(String),
-}
-
 /// Top-level configuration for the extractor.
+///
+/// The extractor always tries all standard separators (`/`, `-`, `.`, `,`,
+/// `\`, and whitespace) automatically — no separator needs to be specified.
+/// Use [`Config::no_separator`] to enable parsing of fully concatenated
+/// date strings (e.g. `"25122024"`), and [`Config::extra_separators`] to
+/// add custom separator strings (e.g. `"||"`, `" - "`).
 ///
 /// Construct via [`Config::default()`] and override only the fields you need,
 /// or build a fully custom config by setting each field explicitly.
@@ -420,8 +401,12 @@ pub struct Config {
     /// The expected ordering of date components for positional (numeric) inputs.
     /// Default: Day → Month → Year. See [`ComponentOrder`].
     pub component_order: ComponentOrder,
-    /// The primary separator to expect between date components.
-    pub primary_separator: Separator,
+    /// When `true`, the extractor also attempts to parse fully concatenated
+    /// date strings with no separator (e.g. `"25122024"`). Default: `false`.
+    pub no_separator: bool,
+    /// Additional custom separator strings to try alongside the standard set.
+    /// Default: empty. Example: `vec!["||".to_string(), " - ".to_string()]`.
+    pub extra_separators: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

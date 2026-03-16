@@ -334,6 +334,7 @@ fn full_date_invalid_month(#[case] utterance: &str) {
 // -------------------------------------------------------------------------
 
 /// Dates without separators, like "25122024" in Day → Month → Year order.
+/// The `no_separator` flag must be enabled for concatenated date parsing.
 #[rstest]
 #[case("25122024", order_dmy(), 25, 12, 2024)]
 #[case("12252024", order_mdy(), 25, 12, 2024)]
@@ -347,7 +348,7 @@ fn full_date_no_separator(
 ) {
     let config = Config {
         component_order: order,
-        primary_separator: Separator::NoSeparator,
+        no_separator: true,
         ..Default::default()
     };
     let result = extract(input_with_config(utterance, config));
@@ -409,6 +410,89 @@ fn full_date_ordinal_day_with_month_name() {
     assert_eq!(result.month.number, Extracted::Found(12));
     assert_eq!(result.month.name, Extracted::Found(MonthName::December));
     assert_eq!(result.year.value, Extracted::Found(2024));
+}
+
+// -------------------------------------------------------------------------
+// Full date with noise words and non-standard phrasing
+// -------------------------------------------------------------------------
+
+/// Full dates expressed in natural spoken/written language with surrounding
+/// noise text. Day, month, and year should all be extracted.
+#[rstest]
+#[case("I was born in 2014 October 19", 19, 10, MonthName::October, 2014)]
+#[case("October 26 2012", 26, 10, MonthName::October, 2012)]
+#[case("31 July  2014", 31, 7, MonthName::July, 2014)]
+#[case("30 December 2014", 30, 12, MonthName::December, 2014)]
+#[case("25th  October  2025", 25, 10, MonthName::October, 2025)]
+#[case("January27 2013", 27, 1, MonthName::January, 2013)]
+fn full_date_natural_language_with_noise(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Full date with mixed separators within a single string.
+#[rstest]
+#[case("19th  October,2015", 19, 10, MonthName::October, 2015)]
+#[case("18/6. 2013", 18, 6, MonthName::June, 2013)]
+fn full_date_mixed_separators(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Two-digit year embedded in natural language: "8 October 11" →
+/// day=8, month=October, year=2011 (sliding window: 11 → 2011).
+#[test]
+fn full_date_natural_language_two_digit_year() {
+    let result = extract(input("8 October 11"));
+
+    assert_eq!(result.day.value, Extracted::Found(8));
+    assert_eq!(result.month.number, Extracted::Found(10));
+    assert_eq!(result.month.name, Extracted::Found(MonthName::October));
+    assert_eq!(result.year.value, Extracted::Found(2011));
+}
+
+/// Noise characters interspersed in the utterance: "8 October >type 11" →
+/// same as "8 October 11", noise ">type" is ignored.
+#[test]
+fn full_date_natural_language_with_noise_characters() {
+    let result = extract(input("8 October >type 11"));
+
+    assert_eq!(result.day.value, Extracted::Found(8));
+    assert_eq!(result.month.number, Extracted::Found(10));
+    assert_eq!(result.month.name, Extracted::Found(MonthName::October));
+    assert_eq!(result.year.value, Extracted::Found(2011));
+}
+
+/// "31 December 2o14" — OCR-style typo where the digit `0` is replaced by
+/// letter `o`. Year should be NotFound; day and month are still extracted.
+#[test]
+fn full_date_year_with_ocr_typo_not_found() {
+    let result = extract(input("31 December  2o14"));
+
+    assert_eq!(result.day.value, Extracted::Found(31));
+    assert_eq!(result.month.number, Extracted::Found(12));
+    assert_eq!(result.month.name, Extracted::Found(MonthName::December));
+    assert!(result.year.value.is_not_found());
 }
 
 // -------------------------------------------------------------------------

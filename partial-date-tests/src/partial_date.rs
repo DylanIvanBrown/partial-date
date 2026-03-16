@@ -281,6 +281,7 @@ fn partial_the_nth_of_month(
 #[case("1999", 1999)]
 #[case("1900", 1900)]
 #[case("2025", 2025)]
+#[case("2010", 2010)]
 fn partial_year_only(#[case] utterance: &str, #[case] expected_year: i32) {
     let result = extract(input(utterance));
 
@@ -299,6 +300,8 @@ fn partial_year_only(#[case] utterance: &str, #[case] expected_year: i32) {
 #[case("2nd", 2)]
 #[case("3rd", 3)]
 #[case("15th", 15)]
+#[case("16th", 16)]
+#[case("18th", 18)]
 #[case("21st", 21)]
 #[case("31st", 31)]
 fn partial_ordinal_day_only(#[case] utterance: &str, #[case] expected_day: u8) {
@@ -580,6 +583,95 @@ fn partial_year_not_expected(
 
     assert_eq!(result.day.value, Extracted::Found(expected_day));
     assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert!(result.year.value.is_not_found());
+}
+
+// -------------------------------------------------------------------------
+// No-space adjacent day and month name
+// -------------------------------------------------------------------------
+
+/// Day number immediately adjacent to a month name (no separator).
+/// The extractor should still identify both components.
+#[rstest]
+#[case("19october", 19, 10, MonthName::October)]
+#[case("9july", 9, 7, MonthName::July)]
+fn partial_day_adjacent_to_month_name(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_name: MonthName,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Month name immediately adjacent to a day number (no separator).
+#[rstest]
+#[case("August7", 7, 8, MonthName::August)]
+fn partial_month_name_adjacent_to_day(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_name: MonthName,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+    assert!(result.year.value.is_not_found());
+}
+
+// -------------------------------------------------------------------------
+// Day + month name with various noise words
+// -------------------------------------------------------------------------
+
+/// A bare number + month name where surrounding noise is present.
+#[rstest]
+#[case("25 October", 25, 10, MonthName::October)]
+fn partial_day_and_month_name_with_noise(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_name: MonthName,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+    assert!(result.year.value.is_not_found());
+}
+
+// -------------------------------------------------------------------------
+// Inputs containing only noise — no date components
+// -------------------------------------------------------------------------
+
+/// Input that contains no date components at all should return NotFound
+/// for everything.
+#[rstest]
+#[case("No")]
+#[case("Friday")]
+#[case("hello world")]
+fn partial_no_date_components(#[case] utterance: &str) {
+    let result = extract(input(utterance));
+
+    assert!(result.day.value.is_not_found());
+    assert!(result.month.number.is_not_found());
+    assert!(result.year.value.is_not_found());
+}
+
+/// "Friday 31" — "Friday" is a noise word; day 31 should still be extracted.
+#[test]
+fn partial_day_with_weekday_noise() {
+    let result = extract(input("Friday 31"));
+
+    assert_eq!(result.day.value, Extracted::Found(31));
+    assert!(result.month.number.is_not_found());
     assert!(result.year.value.is_not_found());
 }
 

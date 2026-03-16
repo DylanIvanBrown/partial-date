@@ -38,7 +38,8 @@ fn default_config_has_sensible_defaults() {
 
     // Component order and separator
     assert_eq!(config.component_order, ComponentOrder::default());
-    assert_eq!(config.primary_separator, Separator::ForwardSlash);
+    assert!(!config.no_separator);
+    assert!(config.extra_separators.is_empty());
 }
 
 /// Default DayConfig independently.
@@ -334,43 +335,56 @@ fn config_component_order_accepts_valid_orderings(
 // Config with different separator variants
 // -------------------------------------------------------------------------
 
-/// Each built-in separator variant should work for date extraction.
+/// The extractor automatically handles all standard separators without any
+/// config — each of these inputs should produce the same result.
 #[rstest]
-#[case(Separator::ForwardSlash, "25/12/2024")]
-#[case(Separator::Dash, "25-12-2024")]
-#[case(Separator::Dot, "25.12.2024")]
-#[case(Separator::BackSlash, "25\\12\\2024")]
-#[case(Separator::Comma, "25,12,2024")]
-#[case(Separator::Space, "25 12 2024")]
-fn config_separator_variants(#[case] separator: Separator, #[case] utterance: &str) {
-    let config = Config {
-        primary_separator: separator,
-        ..Default::default()
-    };
-    let input = input_with_config(utterance, config);
-    let result = extract(input);
+#[case("25/12/2024")]
+#[case("25-12-2024")]
+#[case("25.12.2024")]
+#[case("25\\12\\2024")]
+#[case("25,12,2024")]
+#[case("25 12 2024")]
+fn config_separator_variants(#[case] utterance: &str) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
 
     assert_eq!(result.day.value, Extracted::Found(25));
     assert_eq!(result.month.number, Extracted::Found(12));
     assert_eq!(result.year.value, Extracted::Found(2024));
 }
 
-/// Custom separator: using Separator::Other with a custom string.
+/// Extra separators: custom separator strings added via `extra_separators`
+/// are tried in addition to the standard set.
 #[rstest]
 #[case("||", "25||12||2024")]
 #[case("::", "25::12::2024")]
 #[case(" - ", "25 - 12 - 2024")]
-fn config_custom_separator(#[case] sep: &str, #[case] utterance: &str) {
+fn config_extra_separator(#[case] sep: &str, #[case] utterance: &str) {
     let config = Config {
-        primary_separator: Separator::Other(sep.to_string()),
+        extra_separators: vec![sep.to_string()],
         ..Default::default()
     };
-    let input = input_with_config(utterance, config);
-    let result = extract(input);
+    let result = extract(input_with_config(utterance, config));
 
     assert_eq!(result.day.value, Extracted::Found(25));
     assert_eq!(result.month.number, Extracted::Found(12));
     assert_eq!(result.year.value, Extracted::Found(2024));
+}
+
+/// Mixed separators within a single string are handled automatically.
+#[rstest]
+#[case("18/6. 2013", 18, 6, 2013)]
+#[case("19th October,2015", 19, 10, 2015)]
+fn config_mixed_separators(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
 }
 
 // -------------------------------------------------------------------------
