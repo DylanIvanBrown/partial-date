@@ -12,46 +12,36 @@ use rstest::rstest;
 // Numeric DD/MM — two components, no year
 // -------------------------------------------------------------------------
 
-/// DD-first formats with "12/06": day=12, month=6, year=NotFound.
+/// Day-first order with two-component input: day and month extracted, year NotFound.
 #[rstest]
-#[case(Format::DDMMYY, "12/06", 12, 6)]
-#[case(Format::DDMMYYYY, "12/06", 12, 6)]
-#[case(Format::DDMMYY, "01/01", 1, 1)]
-#[case(Format::DDMMYYYY, "01/01", 1, 1)]
-#[case(Format::DDMMYY, "31/12", 31, 12)]
-#[case(Format::DDMMYYYY, "31/12", 31, 12)]
-#[case(Format::DDMMYY, "28/02", 28, 2)]
-#[case(Format::DDMMYYYY, "28/02", 28, 2)]
-#[case(Format::DDMMYY, "15/06", 15, 6)]
-#[case(Format::DDMMYYYY, "15/06", 15, 6)]
-fn partial_dd_first_day_and_month(
-    #[case] format: Format,
+#[case("12/06", 12, 6)]
+#[case("01/01", 1, 1)]
+#[case("31/12", 31, 12)]
+#[case("28/02", 28, 2)]
+#[case("15/06", 15, 6)]
+fn partial_dmy_order_day_and_month(
     #[case] utterance: &str,
     #[case] expected_day: u8,
     #[case] expected_month: u8,
 ) {
-    let result = extract(input_with_config(utterance, config_with_format(format)));
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
 
     assert_eq!(result.day.value, Extracted::Found(expected_day));
     assert_eq!(result.month.number, Extracted::Found(expected_month));
     assert!(result.year.value.is_not_found());
 }
 
-/// MM-first formats with numeric input: month and day swapped.
+/// Month-first order with two-component input: month and day swapped.
 #[rstest]
-#[case(Format::MMDDYY, "12/06", 6, 12)]
-#[case(Format::MMDDYYYY, "12/06", 6, 12)]
-#[case(Format::MMDDYY, "06/15", 15, 6)]
-#[case(Format::MMDDYYYY, "06/15", 15, 6)]
-#[case(Format::MMDDYY, "01/28", 28, 1)]
-#[case(Format::MMDDYYYY, "01/28", 28, 1)]
-fn partial_mm_first_day_and_month(
-    #[case] format: Format,
+#[case("12/06", 6, 12)]
+#[case("06/15", 15, 6)]
+#[case("01/28", 28, 1)]
+fn partial_mdy_order_day_and_month(
     #[case] utterance: &str,
     #[case] expected_day: u8,
     #[case] expected_month: u8,
 ) {
-    let result = extract(input_with_config(utterance, config_with_format(format)));
+    let result = extract(input_with_config(utterance, config_with_order(order_mdy())));
 
     assert_eq!(result.day.value, Extracted::Found(expected_day));
     assert_eq!(result.month.number, Extracted::Found(expected_month));
@@ -59,29 +49,27 @@ fn partial_mm_first_day_and_month(
 }
 
 // -------------------------------------------------------------------------
-// Unambiguous two-component dates — format irrelevant
+// Unambiguous two-component dates — order irrelevant
 // -------------------------------------------------------------------------
 
 /// When the first value exceeds 12 it can only be a day, making the split
-/// unambiguous regardless of the configured format.
+/// unambiguous regardless of the configured component order.
 #[rstest]
-#[case(Format::DDMMYY, "31/06", 31, 6)]
-#[case(Format::MMDDYY, "31/06", 31, 6)]
-#[case(Format::DDMMYYYY, "31/06", 31, 6)]
-#[case(Format::MMDDYYYY, "31/06", 31, 6)]
-#[case(Format::DDMMYY, "29/11", 29, 11)]
-#[case(Format::MMDDYY, "29/11", 29, 11)]
-#[case(Format::DDMMYY, "25/03", 25, 3)]
-#[case(Format::MMDDYY, "25/03", 25, 3)]
-#[case(Format::DDMMYY, "30/09", 30, 9)]
-#[case(Format::MMDDYY, "30/09", 30, 9)]
+#[case(order_dmy(), "31/06", 31, 6)]
+#[case(order_mdy(), "31/06", 31, 6)]
+#[case(order_dmy(), "29/11", 29, 11)]
+#[case(order_mdy(), "29/11", 29, 11)]
+#[case(order_dmy(), "25/03", 25, 3)]
+#[case(order_mdy(), "25/03", 25, 3)]
+#[case(order_dmy(), "30/09", 30, 9)]
+#[case(order_mdy(), "30/09", 30, 9)]
 fn partial_unambiguous_large_day(
-    #[case] format: Format,
+    #[case] order: ComponentOrder,
     #[case] utterance: &str,
     #[case] expected_day: u8,
     #[case] expected_month: u8,
 ) {
-    let result = extract(input_with_config(utterance, config_with_format(format)));
+    let result = extract(input_with_config(utterance, config_with_order(order)));
 
     assert_eq!(result.day.value, Extracted::Found(expected_day));
     assert_eq!(result.month.number, Extracted::Found(expected_month));
@@ -100,10 +88,7 @@ fn partial_unambiguous_large_day(
 #[case("15 06")]
 #[case("15,06")]
 fn partial_day_month_various_separators(#[case] utterance: &str) {
-    let result = extract(input_with_config(
-        utterance,
-        config_with_format(Format::DDMMYY),
-    ));
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
 
     assert_eq!(result.day.value, Extracted::Found(15));
     assert_eq!(result.month.number, Extracted::Found(6));
@@ -124,10 +109,7 @@ fn partial_day_and_year_no_month(
     #[case] expected_day: u8,
     #[case] expected_year: i32,
 ) {
-    let result = extract(input_with_config(
-        utterance,
-        config_with_format(Format::DDMMYYYY),
-    ));
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
 
     assert_eq!(result.day.value, Extracted::Found(expected_day));
     assert!(result.month.number.is_not_found());
@@ -333,20 +315,19 @@ fn partial_ordinal_day_only(#[case] utterance: &str, #[case] expected_day: u8) {
 
 /// Numeric DD/MM with a configured default year: year should be Defaulted.
 #[rstest]
-#[case(Format::DDMMYY, "12/06", 12, 6, 2025)]
-#[case(Format::DDMMYYYY, "12/06", 12, 6, 2025)]
-#[case(Format::DDMMYY, "01/01", 1, 1, 2000)]
-#[case(Format::DDMMYYYY, "31/12", 31, 12, 1999)]
-#[case(Format::MMDDYY, "06/12", 12, 6, 2025)]
+#[case(order_dmy(), "12/06", 12, 6, 2025)]
+#[case(order_dmy(), "01/01", 1, 1, 2000)]
+#[case(order_dmy(), "31/12", 31, 12, 1999)]
+#[case(order_mdy(), "06/12", 12, 6, 2025)]
 fn partial_numeric_with_default_year(
-    #[case] format: Format,
+    #[case] order: ComponentOrder,
     #[case] utterance: &str,
     #[case] expected_day: u8,
     #[case] expected_month: u8,
     #[case] default_year: i32,
 ) {
     let config = Config {
-        primary_format: format,
+        component_order: order,
         year: YearConfig {
             default: Some(default_year),
             ..Default::default()
@@ -432,7 +413,7 @@ fn partial_day_and_year_with_default_month(
     #[case] expected_year: i32,
 ) {
     let config = Config {
-        primary_format: Format::DDMMYYYY,
+        component_order: order_dmy(),
         month: MonthConfig {
             default: Some(default_month),
             ..Default::default()
@@ -570,11 +551,11 @@ fn partial_empty_input_no_defaults() {
 /// IsExpected::No on year: a number that would normally be a year should not
 /// be extracted when year is explicitly not expected.
 #[rstest]
-#[case(Format::DDMMYYYY, "12/06", 12, 6)]
-#[case(Format::MMDDYYYY, "06/12", 12, 6)]
-#[case(Format::DDMMYY, "15/03", 15, 3)]
+#[case(order_dmy(), "12/06", 12, 6)]
+#[case(order_mdy(), "06/12", 12, 6)]
+#[case(order_dmy(), "15/03", 15, 3)]
 fn partial_year_not_expected(
-    #[case] format: Format,
+    #[case] order: ComponentOrder,
     #[case] utterance: &str,
     #[case] expected_day: u8,
     #[case] expected_month: u8,
@@ -592,7 +573,7 @@ fn partial_year_not_expected(
             expected: IsExpected::No,
             ..Default::default()
         },
-        primary_format: format,
+        component_order: order,
         ..Default::default()
     };
     let result = extract(input_with_config(utterance, config));

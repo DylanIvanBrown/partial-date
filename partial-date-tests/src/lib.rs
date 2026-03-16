@@ -91,11 +91,60 @@ mod helpers {
         }
     }
 
-    /// Build a config with a specific format.
-    pub fn config_with_format(format: Format) -> Config {
+    /// Build a config with a specific component order.
+    pub fn config_with_order(order: ComponentOrder) -> Config {
         Config {
-            primary_format: format,
+            component_order: order,
             ..Default::default()
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Pre-built ComponentOrder constants matching the old Format variants
+    // ---------------------------------------------------------------------------
+
+    /// Day → Month → Year (formerly `Format::DDMMYY` / `Format::DDMMYYYY`).
+    pub fn order_dmy() -> ComponentOrder {
+        ComponentOrder {
+            first: DateComponent::Day,
+            second: DateComponent::Month,
+            third: DateComponent::Year,
+        }
+    }
+
+    /// Month → Day → Year (formerly `Format::MMDDYY` / `Format::MMDDYYYY`).
+    pub fn order_mdy() -> ComponentOrder {
+        ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Day,
+            third: DateComponent::Year,
+        }
+    }
+
+    /// Year → Month → Day (formerly `Format::YYYYMMDD` / `Format::YYMMDD`).
+    pub fn order_ymd() -> ComponentOrder {
+        ComponentOrder {
+            first: DateComponent::Year,
+            second: DateComponent::Month,
+            third: DateComponent::Day,
+        }
+    }
+
+    /// Year → Day → Month (formerly `Format::YYYYDDMM` / `Format::YYDDMM`).
+    pub fn order_ydm() -> ComponentOrder {
+        ComponentOrder {
+            first: DateComponent::Year,
+            second: DateComponent::Day,
+            third: DateComponent::Month,
+        }
+    }
+
+    /// Month → Year → Day (formerly `Format::MMYYDD` / `Format::MMYYYYDD`).
+    pub fn order_myd() -> ComponentOrder {
+        ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Year,
+            third: DateComponent::Day,
         }
     }
 }

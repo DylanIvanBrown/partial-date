@@ -301,29 +301,83 @@ impl Default for YearConfig {
     }
 }
 
-/// The expected ordering of date components when the input is ambiguous.
+/// A single date component: day, month, or year.
 ///
-/// For example, `01/06/24` is ambiguous — `Format::DDMMYY` interprets it as
-/// 1 June 2024, while `Format::MMDDYY` gives 6 January 2024.
+/// Used within [`ComponentOrder`] to describe the positional ordering of
+/// components in structured (numeric) date input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateComponent {
+    /// The day-of-month value (1–31).
+    Day,
+    /// The month value (1–12).
+    Month,
+    /// The year value.
+    Year,
+}
+
+/// The expected ordering of date components in positional (numeric) input.
 ///
-/// For unambiguous inputs (e.g. `31/06/24`) the correct interpretation can
-/// always be determined regardless of this setting.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum Format {
-    DDMMYY,
-    #[default]
-    DDMMYYYY,
-    MMDDYY,
-    MMDDYYYY,
-    MMYYDD,
-    MMYYYYDD,
-    YYMMDD,
-    YYDDMM,
-    YYYYMMDD,
-    YYYYDDMM,
-    /// A custom format string. Use `D`, `M`, and `Y` to denote day, month,
-    /// and year positions respectively (e.g. `"D-M-Y"`).
-    Other(String),
+/// For example, `01/06/24` is ambiguous — a `ComponentOrder` of
+/// `[Day, Month, Year]` interprets it as 1 June 2024, while
+/// `[Month, Day, Year]` gives 6 January 2024.
+///
+/// For unambiguous inputs (e.g. `31/06/24`) the correct interpretation
+/// can always be determined regardless of this setting.
+///
+/// All three components must be present and each must appear exactly once.
+/// Construct with [`ComponentOrder::new`] to enforce this invariant, or use
+/// [`ComponentOrder::default`] for the standard Day/Month/Year order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentOrder {
+    /// The component expected in the first position.
+    pub first: DateComponent,
+    /// The component expected in the second position.
+    pub second: DateComponent,
+    /// The component expected in the third position.
+    pub third: DateComponent,
+}
+
+/// Errors returned by [`ComponentOrder::new`] when validation fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentOrderError {
+    /// The same component appears more than once in the order.
+    DuplicateComponent(DateComponent),
+}
+
+impl ComponentOrder {
+    /// Create a new `ComponentOrder`, returning `Err` if any component is
+    /// duplicated (which also implies another is missing).
+    pub fn new(
+        first: DateComponent,
+        second: DateComponent,
+        third: DateComponent,
+    ) -> Result<Self, ComponentOrderError> {
+        if first == second {
+            return Err(ComponentOrderError::DuplicateComponent(first));
+        }
+        if first == third {
+            return Err(ComponentOrderError::DuplicateComponent(first));
+        }
+        if second == third {
+            return Err(ComponentOrderError::DuplicateComponent(second));
+        }
+        Ok(ComponentOrder {
+            first,
+            second,
+            third,
+        })
+    }
+}
+
+impl Default for ComponentOrder {
+    /// The default order is Day → Month → Year (e.g. `DD/MM/YYYY`).
+    fn default() -> Self {
+        ComponentOrder {
+            first: DateComponent::Day,
+            second: DateComponent::Month,
+            third: DateComponent::Year,
+        }
+    }
 }
 
 /// A field separator that may appear between date components.
@@ -363,8 +417,9 @@ pub struct Config {
     pub month: MonthConfig,
     /// Configuration for year extraction.
     pub year: YearConfig,
-    /// The expected date component ordering for ambiguous inputs.
-    pub primary_format: Format,
+    /// The expected ordering of date components for positional (numeric) inputs.
+    /// Default: Day → Month → Year. See [`ComponentOrder`].
+    pub component_order: ComponentOrder,
     /// The primary separator to expect between date components.
     pub primary_separator: Separator,
 }

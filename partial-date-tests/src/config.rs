@@ -36,8 +36,8 @@ fn default_config_has_sensible_defaults() {
         TwoDigitYearExpansion::SlidingWindow(WindowRange::default())
     );
 
-    // Format and separator
-    assert_eq!(config.primary_format, Format::DDMMYYYY);
+    // Component order and separator
+    assert_eq!(config.component_order, ComponentOrder::default());
     assert_eq!(config.primary_separator, Separator::ForwardSlash);
 }
 
@@ -267,31 +267,67 @@ fn config_with_expected_yes_for_all() {
 }
 
 // -------------------------------------------------------------------------
-// Config with custom format (Format::Other)
+// Config with ComponentOrder
 // -------------------------------------------------------------------------
 
-/// Using Format::Other with various custom format strings.
+/// All six valid ComponentOrder permutations can be constructed and set.
 #[rstest]
-#[case("D-M-Y", "25-12-2024", 25, 12, 2024)]
-#[case("Y-M-D", "2024-12-25", 25, 12, 2024)]
-#[case("M-D-Y", "12-25-2024", 25, 12, 2024)]
-fn config_custom_format(
-    #[case] format_str: &str,
+#[case(order_dmy(), "25/12/2024", 25, 12, 2024)]
+#[case(order_mdy(), "12/25/2024", 25, 12, 2024)]
+#[case(order_ymd(), "2024/12/25", 25, 12, 2024)]
+#[case(order_ydm(), "2024/25/12", 25, 12, 2024)]
+#[case(order_myd(), "12/2024/25", 25, 12, 2024)]
+fn config_custom_component_order(
+    #[case] order: ComponentOrder,
     #[case] utterance: &str,
     #[case] expected_day: u8,
     #[case] expected_month: u8,
     #[case] expected_year: i32,
 ) {
     let config = Config {
-        primary_format: Format::Other(format_str.to_string()),
+        component_order: order,
         ..Default::default()
     };
-    let input = input_with_config(utterance, config);
-    let result = extract(input);
+    let result = extract(input_with_config(utterance, config));
 
     assert_eq!(result.day.value, Extracted::Found(expected_day));
     assert_eq!(result.month.number, Extracted::Found(expected_month));
     assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// ComponentOrder::new rejects duplicate components.
+#[rstest]
+#[case(DateComponent::Day, DateComponent::Day, DateComponent::Month)]
+#[case(DateComponent::Month, DateComponent::Year, DateComponent::Month)]
+#[case(DateComponent::Year, DateComponent::Month, DateComponent::Year)]
+fn config_component_order_rejects_duplicates(
+    #[case] first: DateComponent,
+    #[case] second: DateComponent,
+    #[case] third: DateComponent,
+) {
+    let result = ComponentOrder::new(first, second, third);
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        ComponentOrderError::DuplicateComponent(_)
+    ));
+}
+
+/// ComponentOrder::new accepts all valid (non-duplicate) orderings.
+#[rstest]
+#[case(DateComponent::Day, DateComponent::Month, DateComponent::Year)]
+#[case(DateComponent::Day, DateComponent::Year, DateComponent::Month)]
+#[case(DateComponent::Month, DateComponent::Day, DateComponent::Year)]
+#[case(DateComponent::Month, DateComponent::Year, DateComponent::Day)]
+#[case(DateComponent::Year, DateComponent::Day, DateComponent::Month)]
+#[case(DateComponent::Year, DateComponent::Month, DateComponent::Day)]
+fn config_component_order_accepts_valid_orderings(
+    #[case] first: DateComponent,
+    #[case] second: DateComponent,
+    #[case] third: DateComponent,
+) {
+    let result = ComponentOrder::new(first, second, third);
+    assert!(result.is_ok());
 }
 
 // -------------------------------------------------------------------------
@@ -345,12 +381,12 @@ fn config_custom_separator(#[case] sep: &str, #[case] utterance: &str) {
 /// per-call config should take precedence.
 #[test]
 fn per_call_config_overrides_defaults() {
-    // Per-call config with MMDDYYYY format
+    // Per-call config with Month → Day → Year order
     let config = Config {
-        primary_format: Format::MMDDYYYY,
+        component_order: order_mdy(),
         ..Default::default()
     };
-    // "01/06/2024" with MMDDYYYY: month=1, day=6
+    // "01/06/2024" with MDY order: month=1, day=6
     let input = input_with_config("01/06/2024", config);
     let result = extract(input);
 
