@@ -508,3 +508,231 @@ fn full_date_empty_input() {
     assert!(result.month.number.is_not_found());
     assert!(result.year.value.is_not_found());
 }
+
+// -------------------------------------------------------------------------
+// Stronger edge cases: messy input, unusual formats
+// -------------------------------------------------------------------------
+
+/// Multiple extra spaces around date components should still parse correctly.
+#[rstest]
+#[case("25   /   12   /   2024", 25, 12, 2024)]
+#[case("  1  /  1  /  2000  ", 1, 1, 2000)]
+fn full_date_excessive_spacing(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Mixed separators within a single date (slashes, dashes, dots, spaces).
+#[rstest]
+#[case("25/12-2024", 25, 12, 2024)]
+#[case("1.6 2025", 1, 6, 2025)]
+#[case("31-12/99", 31, 12, 1999)]
+fn full_date_mixed_separator_styles(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Ordinal day markers (st, nd, rd, th) with numeric month and year.
+#[rstest]
+#[case("25th 12 2024", 25, 12, 2024)]
+#[case("1st 1 2000", 1, 1, 2000)]
+#[case("31st 12 1999", 31, 12, 1999)]
+fn full_date_ordinal_day_with_numeric_components(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Fuzzy month names (misspellings) with numeric day/year should still extract all.
+#[rstest]
+#[case("25 Decmber 2024", 25, 12, MonthName::December, 2024)]
+#[case("1 Januray 2000", 1, 1, MonthName::January, 2000)]
+#[case("31 Ocotber 1999", 31, 10, MonthName::October, 1999)]
+#[case("15 Augst 2020", 15, 8, MonthName::August, 2020)]
+fn full_date_fuzzy_month_name_with_numeric(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// 3-letter abbreviated month with ordinal day.
+#[rstest]
+#[case("15th Dec 2024", 15, 12, MonthName::December, 2024)]
+#[case("1st Jan 2000", 1, 1, MonthName::January, 2000)]
+#[case("31st Oct 1999", 31, 10, MonthName::October, 1999)]
+fn full_date_abbreviated_month_with_ordinal_day(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Natural language dates with embedded commas and extra text: "On 25, December 2024".
+#[rstest]
+#[case("On 25, December 2024", 25, 12, MonthName::December, 2024)]
+#[case("Born 1 , January 1990", 1, 1, MonthName::January, 1990)]
+fn full_date_with_embedded_commas_and_text(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Boundary dates: start of year, end of year, leap year.
+#[rstest]
+#[case("01/01/2024", 1, 1, 2024)]
+#[case("31/12/2024", 31, 12, 2024)]
+#[case("29/02/2024", 29, 2, 2024)] // Leap year
+#[case("31/01/2000", 31, 1, 2000)]
+fn full_date_boundary_dates(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Two-digit year at the boundary of sliding window (00, 49, 50, 99).
+#[rstest]
+#[case("15/06/00", 15, 6, 2000)]
+#[case("15/06/49", 15, 6, 2049)]
+#[case("15/06/50", 15, 6, 1950)]
+#[case("15/06/99", 15, 6, 1999)]
+fn full_date_two_digit_year_window_boundaries(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Year boundary cases (historical and far future).
+#[rstest]
+#[case("15/6/1800", 15, 6, 1800)]
+#[case("15/6/2999", 15, 6, 2999)]
+fn full_date_year_historical_and_future(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Case variations in abbreviated and full month names with natural language.
+#[rstest]
+#[case("25 DECEMBER 2024", 25, 12, MonthName::December, 2024)]
+#[case("1 jAnUaRy 2000", 1, 1, MonthName::January, 2000)]
+#[case("31 ocToBer 1999", 31, 10, MonthName::October, 1999)]
+fn full_date_case_insensitive_month_names(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Unambiguous numeric dates with leading zeros (1-9 single digits with leading zero).
+#[rstest]
+#[case("01/02/2024", 1, 2, 2024)]
+#[case("07/08/1999", 7, 8, 1999)]
+#[case("09/09/2050", 9, 9, 2050)]
+fn full_date_leading_zeros(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Dates with surrounding natural language noise: "Remind me on 25/12/2024 please".
+#[rstest]
+#[case("Remind me on 25/12/2024 please", 25, 12, 2024)]
+#[case("The date is 01-06-2000 and then", 1, 6, 2000)]
+#[case("Please note: 31.12.1999 is historic", 31, 12, 1999)]
+fn full_date_surrounded_by_natural_language_noise(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}

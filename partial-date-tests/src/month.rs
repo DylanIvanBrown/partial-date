@@ -325,3 +325,165 @@ fn month_abbreviation_with_dot(#[case] utterance: &str, #[case] expected_number:
 
     assert_eq!(result.month.number, Extracted::Found(expected_number));
 }
+
+// -------------------------------------------------------------------------
+// Stronger fuzzy matching: more complex misspellings
+// -------------------------------------------------------------------------
+
+/// Single character transpositions and swaps in month names.
+#[rstest]
+#[case("Januray", 1, MonthName::January)] // r and a swapped
+#[case("Feburary", 2, MonthName::February)] // a and u swapped
+#[case("Decmeber", 12, MonthName::December)] // m and e swapped
+#[case("Sepetmber", 9, MonthName::September)] // e and t swapped
+fn month_fuzzy_character_transpositions(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
+/// Double/repeated characters (common typo).
+#[rstest]
+#[case("Januuarry", 1, MonthName::January)]
+#[case("Febbuary", 2, MonthName::February)]
+#[case("Maarch", 3, MonthName::March)]
+#[case("Decemmber", 12, MonthName::December)]
+fn month_fuzzy_repeated_characters(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
+/// Missing/omitted characters (common typo).
+#[rstest]
+#[case("Jnuary", 1, MonthName::January)] // a omitted
+#[case("Febuary", 2, MonthName::February)] // r omitted
+#[case("Aprl", 4, MonthName::April)] // i omitted
+#[case("Jue", 6, MonthName::June)] // n omitted
+#[case("Octber", 10, MonthName::October)] // o omitted from Oct
+fn month_fuzzy_omitted_characters(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
+/// Extra/inserted characters (common OCR or speech-to-text error).
+#[rstest]
+#[case("Januaryy", 1, MonthName::January)]
+#[case("Februarry", 2, MonthName::February)]
+#[case("Marsch", 3, MonthName::March)]
+#[case("Decmemberr", 12, MonthName::December)]
+fn month_fuzzy_extra_characters(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
+/// Phonetic misspellings (common speech-to-text errors).
+#[rstest]
+#[case("Feburairy", 2, MonthName::February)] // sounds like Feb
+#[case("Septembur", 9, MonthName::September)] // sounds like Sept
+#[case("Octoebr", 10, MonthName::October)] // phonetic
+fn month_fuzzy_phonetic_misspellings(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
+/// Short month abbreviations (3-letter standard).
+#[rstest]
+#[case("Mar", 3, MonthName::March)]
+#[case("Apr", 4, MonthName::April)]
+#[case("Aug", 8, MonthName::August)]
+#[case("Sep", 9, MonthName::September)]
+#[case("Oct", 10, MonthName::October)]
+#[case("Nov", 11, MonthName::November)]
+fn month_three_letter_abbreviations_varied(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
+/// Mixed case with fuzzy matching (e.g., "jAnUaRy" with typo).
+#[rstest]
+#[case("jAnUaRy", 1, MonthName::January)]
+#[case("FeBuArY", 2, MonthName::February)]
+#[case("mArCh", 3, MonthName::March)]
+#[case("DECEMBER", 12, MonthName::December)]
+fn month_fuzzy_mixed_case(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
+/// Month name in natural language context.
+#[rstest]
+#[case("it's January", 1, MonthName::January)]
+#[case("in December", 12, MonthName::December)]
+#[case("was June 2024", 6, MonthName::June)]
+#[case("here March", 3, MonthName::March)]
+fn month_in_varied_natural_language(
+    #[case] utterance: &str,
+    #[case] expected_number: u8,
+    #[case] expected_name: MonthName,
+) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_number));
+    assert_eq!(result.month.name, Extracted::Found(expected_name));
+}
+
+/// Month number within natural language text.
+#[rstest]
+#[case("Month is 01 today", 1)]
+#[case("the month 6", 6)]
+#[case("06 is June", 6)]
+fn month_numeric_in_natural_language(#[case] utterance: &str, #[case] expected_month: u8) {
+    let input = input_with_config(utterance, month_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+}

@@ -699,3 +699,212 @@ fn partial_day_not_expected(
     assert_eq!(result.month.name, Extracted::Found(expected_name));
     assert_eq!(result.year.value, Extracted::Found(expected_year));
 }
+
+// -------------------------------------------------------------------------
+// Stronger edge cases: messy partial dates, boundary conditions
+// -------------------------------------------------------------------------
+
+/// Partial date with excessive spacing around components.
+#[rstest]
+#[case("  15  /  06  ", 15, 6)]
+#[case(" 01 - 12 ", 1, 12)]
+fn partial_excessive_spacing(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Partial date with mixed separators (day/month).
+#[rstest]
+#[case("15/06", 15, 6)]
+#[case("15-06", 15, 6)]
+#[case("15.06", 15, 6)]
+#[case("15 06", 15, 6)]
+fn partial_mixed_separators_day_month(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Day with ordinal + month name (no year).
+#[rstest]
+#[case("25th December", 25, 12, MonthName::December)]
+#[case("1st January", 1, 1, MonthName::January)]
+#[case("31st October", 31, 10, MonthName::October)]
+fn partial_ordinal_day_with_month_name(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Fuzzy month name + year (no day).
+#[rstest]
+#[case("Decmber 2024", 12, MonthName::December, 2024)]
+#[case("Januray 1999", 1, MonthName::January, 1999)]
+#[case("Ocotber 2025", 10, MonthName::October, 2025)]
+fn partial_fuzzy_month_with_year(
+    #[case] utterance: &str,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert!(result.day.value.is_not_found());
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Boundary day/month combinations.
+#[rstest]
+#[case("01/01", 1, 1)] // First day of first month
+#[case("31/12", 31, 12)] // Last day of last month
+#[case("29/02", 29, 2)] // Leap day
+#[case("15/06", 15, 6)] // Mid-year
+fn partial_boundary_day_month_combos(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Day/month with surrounding natural language text.
+#[rstest]
+#[case("on 15/06 there", 15, 6)]
+#[case("date is 31-12 please", 31, 12)]
+#[case("was 01.01 when", 1, 1)]
+fn partial_day_month_surrounded_by_text(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Month name abbreviated + day (no year).
+#[rstest]
+#[case("Dec 25", 25, 12, MonthName::December)]
+#[case("Jan 1", 1, 1, MonthName::January)]
+#[case("Jun 15", 15, 6, MonthName::June)]
+fn partial_abbreviated_month_with_day(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Year only (2-digit and 4-digit variants).
+#[rstest]
+#[case("2024", 2024)] // 4-digit
+#[case("24", 2024)] // 2-digit (sliding window)
+#[case("99", 1999)] // 2-digit boundary (1900s)
+#[case("00", 2000)] // 2-digit boundary (2000s)
+fn partial_year_only_two_digit_and_four_digit(#[case] utterance: &str, #[case] expected_year: i32) {
+    let result = extract(input_with_config(utterance, year_only_config()));
+
+    assert!(result.day.value.is_not_found());
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Month only (numeric and name variants).
+#[rstest]
+#[case("06", 6)]
+#[case("12", 12)]
+#[case("December", 12)]
+#[case("Jan", 1)]
+fn partial_month_only(#[case] utterance: &str, #[case] expected_month: u8) {
+    let result = extract(input_with_config(utterance, month_only_config()));
+
+    assert!(result.day.value.is_not_found());
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Day only (numeric and ordinal variants).
+#[rstest]
+#[case("15", 15)]
+#[case("01", 1)]
+#[case("31", 31)]
+#[case("15th", 15)]
+#[case("1st", 1)]
+fn partial_day_only(#[case] utterance: &str, #[case] expected_day: u8) {
+    let result = extract(input_with_config(utterance, day_only_config()));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert!(result.month.number.is_not_found());
+    assert!(result.year.value.is_not_found());
+}
+
+/// Partial date with leading zeros in all components.
+#[rstest]
+#[case("01/01", 1, 1)]
+#[case("07/08", 7, 8)]
+#[case("09/09", 9, 9)]
+fn partial_leading_zeros(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+) {
+    let result = extract(input_with_config(utterance, config_with_order(order_dmy())));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Month name with case variations + year (no day).
+#[rstest]
+#[case("DECEMBER 2024", 12, MonthName::December, 2024)]
+#[case("january 1999", 1, MonthName::January, 1999)]
+#[case("jUnE 2025", 6, MonthName::June, 2025)]
+fn partial_case_variant_month_with_year(
+    #[case] utterance: &str,
+    #[case] expected_month: u8,
+    #[case] expected_month_name: MonthName,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert!(result.day.value.is_not_found());
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.month.name, Extracted::Found(expected_month_name));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}

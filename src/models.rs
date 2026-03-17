@@ -696,11 +696,18 @@ fn fuzzy_match_month(lower: &str) -> Result<MonthName, MonthNameError> {
 /// text, so consumers can use the token directly without re-parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
-    /// A parsed integer, e.g. `19`, `2014`, `6`.
+    /// A parsed integer together with the number of digits in the original
+    /// source string.
     ///
-    /// Uses `i16` because the full year range required by the spec (0–3000)
-    /// fits within `i16::MAX` (32,767), and day/month values are far smaller.
-    Numeric(i16),
+    /// The digit count is required for year disambiguation: `"24"` (2 digits)
+    /// must be expanded via [`TwoDigitYearExpansion`], while `"2024"` (4
+    /// digits) is used as-is.  Three-digit and five-digit numbers are never
+    /// valid date components.
+    ///
+    /// Uses `i16` for the value because the full year range required by the
+    /// spec (0–3000) fits within `i16::MAX` (32,767), and day/month values
+    /// are far smaller.
+    Numeric(i16, u8),
     /// The numeric day extracted from an ordinal like `"19th"` or `"1st"`,
     /// with the suffix already stripped.
     OrdinalDay(u8),

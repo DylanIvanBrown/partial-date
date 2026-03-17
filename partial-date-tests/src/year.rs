@@ -324,3 +324,161 @@ fn year_outside_default_range() {
 
     assert!(result.year.value.is_not_found());
 }
+
+// -------------------------------------------------------------------------
+// Stronger edge cases: all 2-digit window boundaries, leading zeros, etc.
+// -------------------------------------------------------------------------
+
+/// All boundary years for the default sliding window (00–49 → 2000–2049, 50–99 → 1950–1999).
+#[rstest]
+#[case("00", 2000)]
+#[case("01", 2001)]
+#[case("24", 2024)]
+#[case("48", 2048)]
+#[case("49", 2049)]
+#[case("50", 1950)]
+#[case("51", 1951)]
+#[case("75", 1975)]
+#[case("98", 1998)]
+#[case("99", 1999)]
+fn year_two_digit_all_window_boundaries(#[case] utterance: &str, #[case] expected_year: i32) {
+    let input = input_with_config(utterance, year_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// 4-digit years with leading zeros should parse correctly.
+#[rstest]
+#[case("0001", 1)]
+#[case("0010", 10)]
+#[case("0100", 100)]
+#[case("0500", 500)]
+#[case("1000", 1000)]
+fn year_four_digit_with_leading_zeros(#[case] utterance: &str, #[case] expected_year: i32) {
+    let input = input_with_config(utterance, year_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Year with surrounding natural language text.
+#[rstest]
+#[case("in 2024", 2024)]
+#[case("the year 1999", 1999)]
+#[case("year 2025", 2025)]
+#[case("happened in year 2000", 2000)]
+#[case("back in 1975", 1975)]
+fn year_in_natural_language_context(#[case] utterance: &str, #[case] expected_year: i32) {
+    let input = input_with_config(utterance, year_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Year with excessive spacing around it.
+#[rstest]
+#[case("  2024  ", 2024)]
+#[case("   1999   ", 1999)]
+fn year_excessive_spacing(#[case] utterance: &str, #[case] expected_year: i32) {
+    let input = input_with_config(utterance, year_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Year with trailing punctuation (period and comma).
+#[rstest]
+#[case("2024.", 2024)]
+#[case("1999,", 1999)]
+fn year_with_trailing_punctuation(#[case] utterance: &str, #[case] expected_year: i32) {
+    let input = input_with_config(utterance, year_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Historical years (before modern era).
+#[rstest]
+#[case("1776", 1776)]
+#[case("1066", 1066)]
+#[case("0500", 500)]
+fn year_historical_years(#[case] utterance: &str, #[case] expected_year: i32) {
+    let input = input_with_config(utterance, year_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Future years far ahead.
+#[rstest]
+#[case("2100", 2100)]
+#[case("2500", 2500)]
+#[case("2999", 2999)]
+#[case("3000", 3000)]
+fn year_future_years(#[case] utterance: &str, #[case] expected_year: i32) {
+    let input = input_with_config(utterance, year_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Two-digit years with Always2000s expansion: all values 00–99 map to 2000–2099.
+#[rstest]
+#[case("00", 2000)]
+#[case("25", 2025)]
+#[case("50", 2050)]
+#[case("75", 2075)]
+#[case("99", 2099)]
+fn year_two_digit_always_2000s_all_values(#[case] utterance: &str, #[case] expected_year: i32) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            two_digit_expansion: TwoDigitYearExpansion::Always2000s,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let input = input_with_config(utterance, config);
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Two-digit years with Literal expansion: values stay as-is.
+#[rstest]
+#[case("00", 0)]
+#[case("01", 1)]
+#[case("24", 24)]
+#[case("50", 50)]
+#[case("99", 99)]
+fn year_two_digit_literal_all_values(#[case] utterance: &str, #[case] expected_year: i32) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            two_digit_expansion: TwoDigitYearExpansion::Literal,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let input = input_with_config(utterance, config);
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
