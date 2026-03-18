@@ -22,3 +22,8 @@
 pub mod extract;
 pub mod levenshtein;
 pub mod models;
+
+// Internal modules
+mod interpreter;
+mod tokeniser;
+mod validator;
