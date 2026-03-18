@@ -540,7 +540,7 @@ fn window_range_new_overlapping(#[case] lower: Range, #[case] upper: Range) {
     Range { min: 1950, max: 1999 },
 )]
 #[case(
-    Range { min: 2000, max: 2060 },
+    Range { min: 2001, max: 2060 },
     Range { min: 1960, max: 2000 },
 )]
 fn window_range_new_invalid_total_span(#[case] lower: Range, #[case] upper: Range) {
