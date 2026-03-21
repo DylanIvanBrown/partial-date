@@ -175,6 +175,19 @@ fn assign_numerics(
         return (None, None, None);
     }
 
+    // Fast path: attempt the config-order assignment directly. When the number
+    // of tokens exactly matches the number of open slots and every token is
+    // valid for the slot that `component_order` prescribes at its position,
+    // this is guaranteed to be the best possible assignment — it has the
+    // maximum component count and perfect agreement with the configured order.
+    // Returning immediately avoids the full combinatorial enumeration for the
+    // common case of well-formed input.
+    if numerics.len() == open_slots.len()
+        && let Some(direct) = try_config_order_assignment(numerics, open_slots, config)
+    {
+        return convert_assignment(&direct, numerics, config);
+    }
+
     let viable = generate_viable_assignments(numerics, open_slots, config);
 
     if viable.is_empty() {
@@ -183,30 +196,88 @@ fn assign_numerics(
 
     let best = pick_best_assignment(viable, numerics, config);
 
-    // Convert the winning assignment into typed raw values using the config
-    // methods — no range literals in this file.
-    let raw_day = best
-        .token_for(DateComponent::Day, numerics)
-        .and_then(|(value, digit_count)| {
-            config
+    convert_assignment(&best, numerics, config)
+}
+
+/// Attempt to assign `numerics` directly in `open_slots` order, one token per
+/// slot, without any permutation. Returns `Some(Assignment)` only when every
+/// token is valid for the slot at its corresponding position — i.e. when the
+/// configured component order is fully satisfied by the input as-is.
+///
+/// This is the fast path for well-formed input such as `"21/02/2005"` with DMY.
+fn try_config_order_assignment(
+    numerics: &[(i16, u8)],
+    open_slots: &[DateComponent],
+    config: &Config,
+) -> Option<Assignment> {
+    let mut assignment = Assignment {
+        day_index: None,
+        month_index: None,
+        year_index: None,
+    };
+
+    for (token_index, (&slot, &(value, digit_count))) in
+        open_slots.iter().zip(numerics.iter()).enumerate()
+    {
+        let valid = match slot {
+            DateComponent::Day => config
                 .day
                 .try_as_day_candidate(value, digit_count)
-                .map(|v| (v, digit_count))
-        });
+                .is_some(),
+            DateComponent::Month => config
+                .month
+                .try_as_month_candidate(value, digit_count)
+                .is_some(),
+            DateComponent::Year => config
+                .year
+                .try_as_year_candidate(value, digit_count)
+                .is_some(),
+        };
 
-    let raw_month =
-        best.token_for(DateComponent::Month, numerics)
+        if !valid {
+            return None;
+        }
+
+        match slot {
+            DateComponent::Day => assignment.day_index = Some(token_index),
+            DateComponent::Month => assignment.month_index = Some(token_index),
+            DateComponent::Year => assignment.year_index = Some(token_index),
+        }
+    }
+
+    Some(assignment)
+}
+
+/// Convert a winning [`Assignment`] into the three raw output types, using
+/// the config candidate methods for all validation.
+fn convert_assignment(
+    assignment: &Assignment,
+    numerics: &[(i16, u8)],
+    config: &Config,
+) -> (RawDay, RawMonth, RawYear) {
+    let raw_day =
+        assignment
+            .token_for(DateComponent::Day, numerics)
             .and_then(|(value, digit_count)| {
                 config
-                    .month
-                    .try_as_month_candidate(value, digit_count)
-                    .map(|number| {
-                        let name = MonthName::try_from(number).ok();
-                        (number, name)
-                    })
+                    .day
+                    .try_as_day_candidate(value, digit_count)
+                    .map(|v| (v, digit_count))
             });
 
-    let raw_year = best
+    let raw_month = assignment
+        .token_for(DateComponent::Month, numerics)
+        .and_then(|(value, digit_count)| {
+            config
+                .month
+                .try_as_month_candidate(value, digit_count)
+                .map(|number| {
+                    let name = MonthName::try_from(number).ok();
+                    (number, name)
+                })
+        });
+
+    let raw_year = assignment
         .token_for(DateComponent::Year, numerics)
         .and_then(|(value, digit_count)| config.year.try_as_year_candidate(value, digit_count));
 
