@@ -908,3 +908,575 @@ fn partial_case_variant_month_with_year(
     assert_eq!(result.month.name, Extracted::Found(expected_month_name));
     assert_eq!(result.year.value, Extracted::Found(expected_year));
 }
+
+// -------------------------------------------------------------------------
+// Three values provided but only 2 are valid (1 component becomes NotFound)
+// -------------------------------------------------------------------------
+
+/// Three numeric values where only 2 are valid: 22 22 22 in DMY order.
+/// - First 22 = day (valid)
+/// - Second 22 = month (invalid - 22 is not a valid month)
+/// - Third 22 = year (valid when interpreted as 2022 with 2-digit expansion)
+/// Result: day found, month not found, year found.
+#[rstest]
+#[case("22 22 22", 22, 2022)] // day month(invalid) year
+#[case("15 32 2024", 15, 2024)] // day month(32 invalid) year
+#[case("31 31 2020", 31, 2020)] // day month(31 invalid) year
+#[case("05 13 2025", 5, 2025)] // day month(13 invalid) year
+fn partial_three_values_invalid_month(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert!(result.month.number.is_not_found());
+    assert!(result.month.name.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Three numeric values where only 2 are valid: first and third.
+/// - First value = day (valid)
+/// - Second value = month (but is actually > 31, so could be invalid day if position-swapped)
+/// - Third value = year (valid 4-digit year)
+/// Day is extracted in first position, middle value (too large for month) is rejected,
+/// year is extracted from third position.
+#[rstest]
+#[case("07 45 2019", 7, 2019)] // day month(45 invalid) year
+#[case("12 99 2000", 12, 2000)] // day month(99 invalid) year
+#[case("28 50 2023", 28, 2023)] // day month(50 invalid) year
+#[case("03 100 2021", 3, 2021)] // day month(100 invalid) year
+fn partial_three_values_middle_invalid(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Three numeric values in MDY order where middle (day) value is invalid.
+/// - First = month (valid)
+/// - Second = day (invalid - > 31)
+/// - Third = year (valid)
+/// Result: month found, day not found, year found.
+#[rstest]
+#[case("06 32 2024", 6, 2024)] // month day(32 invalid) year
+#[case("12 45 2020", 12, 2020)] // month day(45 invalid) year
+#[case("01 99 2023", 1, 2023)] // month day(99 invalid) year
+#[case("09 50 2025", 9, 2025)] // month day(50 invalid) year
+fn partial_three_values_mdy_invalid_day(
+    #[case] utterance: &str,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Day,
+            third: DateComponent::Year,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.day.value.is_not_found());
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Three numeric values where the first (day) position is invalid (> 31).
+/// - First = day (invalid - > 31)
+/// - Second = month (valid)
+/// - Third = year (valid)
+/// Result: day not found, month found, year found.
+#[rstest]
+#[case("32 06 2024", 6, 2024)] // day(32 invalid) month year
+#[case("50 12 2020", 12, 2020)] // day(50 invalid) month year
+#[case("99 03 2023", 3, 2023)] // day(99 invalid) month year
+#[case("45 01 2025", 1, 2025)] // day(45 invalid) month year
+fn partial_three_values_first_invalid_day(
+    #[case] utterance: &str,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert!(result.day.value.is_not_found());
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Three numeric values where the third (year) position is invalid (only 2 digits, interpreted as day).
+/// When a 2-digit year is in the third position with default sliding window expansion,
+/// it may be interpreted as another day value instead of year in some contexts.
+#[rstest]
+#[case("15 06 32", 15, 6, 32)] // day month year(32 as 2-digit not valid year expansion)
+#[case("12 08 25", 12, 8, 25)] // day month year(25 as year)
+#[case("05 10 99", 5, 10, 99)] // day month year(99 as year)
+fn partial_three_values_with_two_digit_year(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_month: u8,
+    #[case] expected_year: i32,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+// -------------------------------------------------------------------------
+// Only 1 of 3 values is valid (2 components become NotFound)
+// -------------------------------------------------------------------------
+
+/// Three numeric values where only the middle (month) is valid.
+/// - First = invalid as day (> 31)
+/// - Second = valid month
+/// - Third = invalid as year (single digit too small, and not typical year)
+/// Result: day not found, month found, year not found.
+#[rstest]
+#[case("45 06 2", 6)] // invalid(45) month(06) invalid(2)
+#[case("99 12 1", 12)] // invalid(99) month(12) invalid(1)
+#[case("50 03 3", 3)] // invalid(50) month(03) invalid(3)
+fn partial_three_values_only_month_valid(#[case] utterance: &str, #[case] expected_month: u8) {
+    let result = extract(input(utterance));
+
+    assert!(result.day.value.is_not_found());
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Three numeric values where only the first (day) is valid.
+/// - First = valid day
+/// - Second = invalid month (> 12)
+/// - Third = invalid year (single digit, too small for typical year interpretation)
+/// Result: day found, month not found, year not found.
+#[rstest]
+#[case("15 45 2", 15)] // day(15) invalid(45) invalid(2)
+#[case("03 99 1", 3)] // day(03) invalid(99) invalid(1)
+#[case("28 50 3", 28)] // day(28) invalid(50) invalid(3)
+#[case("31 13 0", 31)] // day(31) invalid(13) invalid(0)
+fn partial_three_values_only_day_valid(#[case] utterance: &str, #[case] expected_day: u8) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert!(result.month.number.is_not_found());
+    assert!(result.year.value.is_not_found());
+}
+
+/// Three numeric values where only the last (year) is valid.
+/// - First = invalid as day (> 31)
+/// - Second = invalid as month (> 12)
+/// - Third = valid 4-digit year
+/// Result: day not found, month not found, year found.
+#[rstest]
+#[case("45 50 2024", 2024)] // invalid(45) invalid(50) year(2024)
+#[case("99 13 2000", 2000)] // invalid(99) invalid(13) year(2000)
+#[case("32 99 2023", 2023)] // invalid(32) invalid(99) year(2023)
+#[case("50 100 2025", 2025)] // invalid(50) invalid(100) year(2025)
+fn partial_three_values_only_year_valid(#[case] utterance: &str, #[case] expected_year: i32) {
+    let result = extract(input(utterance));
+
+    assert!(result.day.value.is_not_found());
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+// -------------------------------------------------------------------------
+// Two 4-digit year values with one other component (only 1 of 3 valid)
+// -------------------------------------------------------------------------
+
+/// Three values where two are 4-digit years and one other component.
+/// Since only the first valid number can be used, only the first 4-digit year is extracted.
+/// The second 4-digit "year" is either rejected or treated as invalid for other positions.
+/// The third component is also invalid or too large.
+/// Result: only one year found, other components not found.
+#[rstest]
+#[case("2024 2023 45", 2024)] // year(2024) year(2023 invalid here) invalid(45)
+#[case("2000 2020 99", 2000)] // year(2000) year(2020 invalid) invalid(99)
+#[case("2015 2010 50", 2015)] // year(2015) year(2010 invalid) invalid(50)
+#[case("2019 1999 13", 2019)] // year(2019) year(1999 invalid) month(13 invalid)
+fn partial_three_values_two_years_one_invalid(#[case] utterance: &str, #[case] expected_year: i32) {
+    let result = extract(input(utterance));
+
+    assert!(result.day.value.is_not_found());
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Three values where two are 4-digit years: positions don't match date component order.
+/// For example, in DMY order, a 4-digit year should be in position 3,
+/// but if it's in position 1 or 2, only the valid-positioned year counts.
+/// - First = 4-digit year (invalid position for day in DMY)
+/// - Second = 4-digit year (invalid position for month in DMY)
+/// - Third = small number (invalid as year, could be day)
+/// Result: day found (from third), month not found, year not found (both years in wrong positions).
+#[rstest]
+#[case("2024 2023 15", 15)] // year(2024 invalid pos) year(2023 invalid pos) day(15)
+#[case("2000 2020 28", 28)] // year(2000 invalid) year(2020 invalid) day(28)
+#[case("2015 2010 03", 3)] // year(2015 invalid) year(2010 invalid) day(03)
+fn partial_three_values_two_4digit_years_wrong_position(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+) {
+    let result = extract(input(utterance));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert!(result.month.number.is_not_found());
+    assert!(result.year.value.is_not_found());
+}
+
+/// Three values where two are 4-digit numbers (both valid years) but only one can be used.
+/// When two valid 4-digit numbers appear, the first one encountered (in component order)
+/// claims the year position, and the second is rejected.
+/// - Position 1 (day): 2024 (4-digit, won't fit as day)
+/// - Position 2 (month): 2020 (4-digit, won't fit as month)
+/// - Position 3 (year): 2023 (4-digit, valid year)
+/// Only the third (correctly positioned) year is used. First two are rejected.
+/// Result: year found (from position 3), day and month not found.
+#[rstest]
+#[case("2024 2020 2023", 2023)] // 4-digit(2024) 4-digit(2020) year(2023)
+#[case("2000 2015 2010", 2010)] // 4-digit(2000) 4-digit(2015) year(2010)
+#[case("2019 1999 2025", 2025)] // 4-digit(2019) 4-digit(1999) year(2025)
+fn partial_three_values_all_4digit_numbers(#[case] utterance: &str, #[case] expected_year: i32) {
+    let result = extract(input(utterance));
+
+    assert!(result.day.value.is_not_found());
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+// -------------------------------------------------------------------------
+// MDY Format Tests: Invalid Month in First Position
+// -------------------------------------------------------------------------
+
+/// MDY format where first position (month) is invalid (> 12).
+/// - First = month position (invalid - > 12)
+/// - Second = day position (valid)
+/// - Third = year position (valid)
+/// Result: month not found, day found, year found.
+#[rstest]
+#[case("13 15 2024", 15, 2024)] // month(13 invalid) day(15) year(2024)
+#[case("32 28 2020", 28, 2020)] // month(32 invalid) day(28) year(2020)
+#[case("99 05 2023", 5, 2023)] // month(99 invalid) day(05) year(2023)
+#[case("45 31 2025", 31, 2025)] // month(45 invalid) day(31) year(2025)
+#[case("50 12 2019", 12, 2019)] // month(50 invalid) day(12) year(2019)
+fn partial_mdy_invalid_month_first_position(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_year: i32,
+) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Day,
+            third: DateComponent::Year,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// MDY format with invalid month (> 12) and invalid day (> 31).
+/// - First = month (invalid - > 12)
+/// - Second = day (invalid - > 31)
+/// - Third = year (valid)
+/// Result: month and day not found, year found.
+#[rstest]
+#[case("13 32 2024", 2024)] // month(13) day(32) year(2024)
+#[case("99 50 2020", 2020)] // month(99) day(50) year(2020)
+#[case("45 45 2023", 2023)] // month(45) day(45) year(2023)
+#[case("50 99 2025", 2025)] // month(50) day(99) year(2025)
+fn partial_mdy_invalid_month_and_day(#[case] utterance: &str, #[case] expected_year: i32) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Day,
+            third: DateComponent::Year,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.month.number.is_not_found());
+    assert!(result.day.value.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// MDY format where only month is invalid, others valid.
+/// - First = month (invalid)
+/// - Second = day (valid)
+/// - Third = year (valid)
+/// Result: only month not found.
+#[rstest]
+#[case("22 15 2024", 15, 2024)] // month(22>12) day(15) year(2024)
+#[case("14 28 2020", 28, 2020)] // month(14>12) day(28) year(2020)
+#[case("25 03 2023", 3, 2023)] // month(25>12) day(03) year(2023)
+#[case("100 31 2025", 31, 2025)] // month(100>12) day(31) year(2025)
+fn partial_mdy_invalid_month_only(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_year: i32,
+) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Day,
+            third: DateComponent::Year,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// MDY format with two components where month is invalid.
+/// - First = month (invalid)
+/// - Second = day (valid)
+/// Result: only day extracted, no year.
+#[rstest]
+#[case("13 15", 15)] // month(13) day(15)
+#[case("32 28", 28)] // month(32) day(28)
+#[case("99 05", 5)] // month(99) day(05)
+#[case("45 31", 31)] // month(45) day(31)
+fn partial_mdy_two_values_invalid_month(#[case] utterance: &str, #[case] expected_day: u8) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Day,
+            third: DateComponent::Year,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert!(result.year.value.is_not_found());
+}
+
+// -------------------------------------------------------------------------
+// MYD Format Tests: Invalid Month in First Position
+// -------------------------------------------------------------------------
+
+/// MYD format where first position (month) is invalid (> 12).
+/// - First = month position (invalid - > 12)
+/// - Second = year position (valid)
+/// - Third = day position (valid)
+/// Result: month not found, year found, day found.
+#[rstest]
+#[case("13 2024 15", 2024, 15)] // month(13 invalid) year(2024) day(15)
+#[case("32 2020 28", 2020, 28)] // month(32 invalid) year(2020) day(28)
+#[case("99 2023 05", 2023, 5)] // month(99 invalid) year(2023) day(05)
+#[case("45 2025 31", 2025, 31)] // month(45 invalid) year(2025) day(31)
+#[case("50 2019 12", 2019, 12)] // month(50 invalid) year(2019) day(12)
+fn partial_myd_invalid_month_first_position(
+    #[case] utterance: &str,
+    #[case] expected_year: i32,
+    #[case] expected_day: u8,
+) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Year,
+            third: DateComponent::Day,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+}
+
+/// MYD format with invalid month (> 12) and invalid day (> 31).
+/// - First = month (invalid - > 12)
+/// - Second = year (valid)
+/// - Third = day (invalid - > 31)
+/// Result: month and day not found, year found.
+#[rstest]
+#[case("13 2024 32", 2024)] // month(13) year(2024) day(32)
+#[case("99 2020 50", 2020)] // month(99) year(2020) day(50)
+#[case("45 2023 45", 2023)] // month(45) year(2023) day(45)
+#[case("50 2025 99", 2025)] // month(50) year(2025) day(99)
+fn partial_myd_invalid_month_and_day(#[case] utterance: &str, #[case] expected_year: i32) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Year,
+            third: DateComponent::Day,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+    assert!(result.day.value.is_not_found());
+}
+
+/// MYD format where only month is invalid, others valid.
+/// - First = month (invalid)
+/// - Second = year (valid)
+/// - Third = day (valid)
+/// Result: only month not found.
+#[rstest]
+#[case("22 2024 15", 2024, 15)] // month(22>12) year(2024) day(15)
+#[case("14 2020 28", 2020, 28)] // month(14>12) year(2020) day(28)
+#[case("25 2023 03", 2023, 3)] // month(25>12) year(2023) day(03)
+#[case("100 2025 31", 2025, 31)] // month(100>12) year(2025) day(31)
+fn partial_myd_invalid_month_only(
+    #[case] utterance: &str,
+    #[case] expected_year: i32,
+    #[case] expected_day: u8,
+) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Year,
+            third: DateComponent::Day,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+}
+
+/// MYD format with two components where month is invalid.
+/// - First = month (invalid)
+/// - Second = year (valid)
+/// Result: only year extracted, no day.
+#[rstest]
+#[case("13 2024", 2024)] // month(13) year(2024)
+#[case("32 2020", 2020)] // month(32) year(2020)
+#[case("99 2023", 2023)] // month(99) year(2023)
+#[case("45 2025", 2025)] // month(45) year(2025)
+fn partial_myd_two_values_invalid_month(#[case] utterance: &str, #[case] expected_year: i32) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Month,
+            second: DateComponent::Year,
+            third: DateComponent::Day,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+    assert!(result.day.value.is_not_found());
+}
+
+// -------------------------------------------------------------------------
+// Mixed Component Order: Invalid Month in Different Positions
+// -------------------------------------------------------------------------
+
+/// YMD format where month (middle position) is invalid.
+/// In YMD order: position 1 = year, position 2 = month, position 3 = day.
+/// - First = year (valid 4-digit)
+/// - Second = month (invalid - > 12)
+/// - Third = day (valid)
+/// Result: year found, month not found, day found.
+#[rstest]
+#[case("2024 13 15", 2024, 15)] // year(2024) month(13) day(15)
+#[case("2020 32 28", 2020, 28)] // year(2020) month(32) day(28)
+#[case("2023 99 05", 2023, 5)] // year(2023) month(99) day(05)
+#[case("2025 45 31", 2025, 31)] // year(2025) month(45) day(31)
+fn partial_ymd_invalid_month_middle_position(
+    #[case] utterance: &str,
+    #[case] expected_year: i32,
+    #[case] expected_day: u8,
+) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Year,
+            second: DateComponent::Month,
+            third: DateComponent::Day,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+    assert!(result.month.number.is_not_found());
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+}
+
+/// DYM format where month (last position) is invalid.
+/// In DYM order: position 1 = day, position 2 = year, position 3 = month.
+/// - First = day (valid)
+/// - Second = year (valid 4-digit)
+/// - Third = month (invalid - > 12)
+/// Result: day found, year found, month not found.
+#[rstest]
+#[case("15 2024 13", 15, 2024)] // day(15) year(2024) month(13)
+#[case("28 2020 32", 28, 2020)] // day(28) year(2020) month(32)
+#[case("05 2023 99", 5, 2023)] // day(05) year(2023) month(99)
+#[case("31 2025 45", 31, 2025)] // day(31) year(2025) month(45)
+fn partial_dym_invalid_month_last_position(
+    #[case] utterance: &str,
+    #[case] expected_day: u8,
+    #[case] expected_year: i32,
+) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Day,
+            second: DateComponent::Year,
+            third: DateComponent::Month,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+    assert!(result.month.number.is_not_found());
+}
+
+/// YDM format where month (last position) is invalid.
+/// In YDM order: position 1 = year, position 2 = day, position 3 = month.
+/// - First = year (valid 4-digit)
+/// - Second = day (valid)
+/// - Third = month (invalid - > 12)
+/// Result: year found, day found, month not found.
+#[rstest]
+#[case("2024 15 13", 2024, 15)] // year(2024) day(15) month(13)
+#[case("2020 28 32", 2020, 28)] // year(2020) day(28) month(32)
+#[case("2023 05 99", 2023, 5)] // year(2023) day(05) month(99)
+#[case("2025 31 45", 2025, 31)] // year(2025) day(31) month(45)
+fn partial_ydm_invalid_month_last_position(
+    #[case] utterance: &str,
+    #[case] expected_year: i32,
+    #[case] expected_day: u8,
+) {
+    let config = Config {
+        component_order: ComponentOrder {
+            first: DateComponent::Year,
+            second: DateComponent::Day,
+            third: DateComponent::Month,
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+    assert_eq!(result.day.value, Extracted::Found(expected_day));
+    assert!(result.month.number.is_not_found());
+}

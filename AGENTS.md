@@ -111,6 +111,47 @@ use std::collections::HashMap;            // stdlib
 Format variant names (`DDMMYYYY`, `YYYYMMDD`, etc.) are intentional all-caps
 abbreviations matching the spec.
 
+### Variable name clarity
+
+**Do not abbreviate variable names outside of closures.** Full words are
+required; contractions that save a few characters at the cost of readability
+are not acceptable.
+
+```rust
+// Bad — abbreviated
+let sep_chars  = ...;
+let multi_seps = ...;
+let dc         = 2_u8;
+let v          = 42_i16;
+
+// Good — full words
+let separator_chars        = ...;
+let multi_char_separators  = ...;
+let digit_count            = 2_u8;
+let value                  = 42_i16;
+```
+
+The exception is **closure parameters**, where the brevity is idiomatic Rust
+and the scope is so small that the meaning is obvious from context:
+
+```rust
+// Fine — closure parameter, scope is one expression
+ranges.sort_by_key(|r| r.start);
+bytes.iter().all(|b| b.is_ascii_digit());
+```
+
+Common abbreviations to avoid:
+
+| Avoid | Use instead |
+|-------|-------------|
+| `sep` / `seps` | `separator` / `separators` |
+| `dc` | `digit_count` |
+| `v` / `v0` / `v1` | `value` / `first_value` / `second_value` |
+| `d` / `d0` / `d1` | `digit_count` / `first_digit_count` / `second_digit_count` |
+| `ch` | `character` |
+| `abs_` prefix | spell out the full intent, e.g. `absolute_start` |
+| `m` / `n` | `month` / `number` (or whatever the domain meaning is) |
+
 ### Types and type safety
 
 - **Newtypes over primitives** — wrap values in domain types (`Day`, `Month`,

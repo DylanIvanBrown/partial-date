@@ -416,6 +416,7 @@ fn assign_day_and_month(
     config: &Config,
 ) -> (RawDay, RawMonth, RawYear) {
     // Unambiguous override: a value > 12 can only be a day.
+    // TODO use a validate function on the Month struct to check if the value could be a month instead of having these numbers here
     if v0 > 12 && v1 <= 12 {
         return (Some((v0 as u8, d0)), to_month_raw(v1, d1), None);
     }
@@ -440,10 +441,11 @@ fn assign_day_and_month(
     let (day_val, day_dc, month_val, month_dc) = match first_component {
         DateComponent::Day => (v0, d0, v1, d1),
         DateComponent::Month => (v1, d1, v0, d0),
-        DateComponent::Year => (v0, d0, v1, d1), // Shouldn't happen.
+        DateComponent::Year => (v0, d0, v1, d1), // Shouldn't happen. // TODO: Expand on this and fix it if we can in some way. A match arm that shouldn't happen is a code smell.
     };
     let _ = second_component; // Used implicitly via the swap above.
 
+    // TODO: Make this a validate function on the Day struct, instead of encoding the key range values here
     if (1..=31).contains(&day_val) {
         (
             Some((day_val as u8, day_dc)),
@@ -500,6 +502,7 @@ fn assign_three_numerics(numerics: &[(i16, u8)], config: &Config) -> (RawDay, Ra
     // real input (e.g. "31/12/19" with MDY).  When day precedes month (e.g.
     // DMY), we trust the positional assignment and let validation reject an
     // out-of-range month value.
+    // TODO: Can we not make this assumption and instead always confirm and assign the month only to the valid value?
     let month_before_day = [order.first, order.second, order.third]
         .iter()
         .position(|c| *c == DateComponent::Month)

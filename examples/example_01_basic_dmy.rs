@@ -7,7 +7,7 @@ use partial_date::models::*;
 fn main() {
     println!("Example 1: Basic DMY Format");
     println!("==========================\n");
-    
+
     println!("Input: '25/12/2024'");
     println!("Config: Day-Month-Year order\n");
 
@@ -24,7 +24,7 @@ fn main() {
     };
 
     let result = extract(input);
-    
+
     println!("Results:");
     println!("  Day:   {:?}", result.day.value);
     println!("  Month: {:?}", result.month.number);

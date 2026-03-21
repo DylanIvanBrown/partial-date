@@ -7,7 +7,7 @@ use partial_date::models::*;
 fn main() {
     println!("Example 9: Fuzzy Month Name Matching");
     println!("===================================\n");
-    
+
     println!("Input: '31 Decmber 2024' (notice typo: 'Decmber')");
     println!("Config: Default (uses Levenshtein distance)\n");
 
@@ -17,7 +17,7 @@ fn main() {
     };
 
     let result = extract(input);
-    
+
     println!("Results:");
     println!("  Day:        {:?}", result.day.value);
     println!("  Month:      {:?}", result.month.number);

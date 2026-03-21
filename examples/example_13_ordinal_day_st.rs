@@ -7,7 +7,7 @@ use partial_date::models::*;
 fn main() {
     println!("Example 13: Ordinal Day Suffix");
     println!("=============================\n");
-    
+
     println!("Input: '1st December 2024'");
     println!("Config: Default\n");
 
@@ -17,7 +17,7 @@ fn main() {
     };
 
     let result = extract(input);
-    
+
     println!("Results:");
     println!("  Day:   {:?}", result.day.value);
     println!("  Month: {:?}", result.month.number);

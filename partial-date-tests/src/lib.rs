@@ -17,6 +17,8 @@ mod partial_date;
 #[cfg(test)]
 mod tokenise;
 #[cfg(test)]
+mod word_numbers;
+#[cfg(test)]
 mod year;
 
 /// Helper module for common test utilities.

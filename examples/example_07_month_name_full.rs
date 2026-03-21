@@ -7,7 +7,7 @@ use partial_date::models::*;
 fn main() {
     println!("Example 7: Natural Language Month Names");
     println!("======================================\n");
-    
+
     println!("Input: '25 December 2024'");
     println!("Config: Default (auto-detects month name)\n");
 
@@ -17,7 +17,7 @@ fn main() {
     };
 
     let result = extract(input);
-    
+
     println!("Results:");
     println!("  Day:        {:?}", result.day.value);
     println!("  Month:      {:?}", result.month.number);

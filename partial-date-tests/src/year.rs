@@ -27,6 +27,23 @@ fn year_only_four_digit(#[case] utterance: &str, #[case] expected_year: i32) {
     assert!(result.month.number.is_not_found());
 }
 
+/// Common four-digit years with the letter O instead of a 0 should be extracted as Found.
+#[rstest]
+#[case("2o24", 2024)]
+#[case("2O25", 2025)]
+#[case("2O00", 2000)]
+#[case("19oo", 1900)]
+#[case("21OO", 2100)]
+#[case("ooo1", 1)]
+fn year_only_four_digit_includes_o(#[case] utterance: &str, #[case] expected_year: i32) {
+    let input = input_with_config(utterance, year_only_config());
+    let result = extract(input);
+
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+    assert!(result.day.value.is_not_found());
+    assert!(result.month.number.is_not_found());
+}
+
 /// Year in surrounding text.
 #[rstest]
 #[case("the year 2024", 2024)]
