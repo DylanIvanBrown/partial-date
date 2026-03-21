@@ -106,6 +106,35 @@ pub struct DayConfig {
     pub default: Option<u8>,
 }
 
+//TODO: Refactor these to be on the Day, Month and Year structs rather than the
+//configs? Only issue might be the min and max, but I think we can instead
+//attach the configs to the structs to assist in that? Perhaps that makes the
+//Structs too messy for returning in the PartialDate and we should have another
+//intermediate struct like DayCandidate or something like that that we can map
+//to a Day using From/Into when we are determining the PartialDate output at the
+//end. That way we don't expose the config in the return value to the user of
+//the library
+impl DayConfig {
+    /// Return `Some(value as u8)` when `value` is a plausible day for this
+    /// config, or `None` when it is not.
+    ///
+    /// A value is a plausible day when:
+    /// - `digit_count` is not 4 (four-digit numbers cannot be days).
+    /// - The value is within the universal day range 1–31.
+    /// - The value falls within the caller-configured `min`/`max` bounds.
+    pub fn try_as_day_candidate(&self, value: i16, digit_count: u8) -> Option<u8> {
+        if digit_count == 4 {
+            return None;
+        }
+        let as_u8 = u8::try_from(value).ok()?;
+        if (1..=31).contains(&value) && (self.min..=self.max).contains(&as_u8) {
+            Some(as_u8)
+        } else {
+            None
+        }
+    }
+}
+
 impl Default for DayConfig {
     fn default() -> Self {
         DayConfig {
@@ -128,6 +157,27 @@ pub struct MonthConfig {
     pub expected: IsExpected,
     /// Default month value to use when the month is not found, if any.
     pub default: Option<u8>,
+}
+
+impl MonthConfig {
+    /// Return `Some(value as u8)` when `value` is a plausible month for this
+    /// config, or `None` when it is not.
+    ///
+    /// A value is a plausible month when:
+    /// - `digit_count` is not 4 (four-digit numbers cannot be months).
+    /// - The value is within the universal month range 1–12.
+    /// - The value falls within the caller-configured `min`/`max` bounds.
+    pub fn try_as_month_candidate(&self, value: i16, digit_count: u8) -> Option<u8> {
+        if digit_count == 4 {
+            return None;
+        }
+        let as_u8 = u8::try_from(value).ok()?;
+        if (1..=12).contains(&value) && (self.min..=self.max).contains(&as_u8) {
+            Some(as_u8)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for MonthConfig {
@@ -287,6 +337,45 @@ pub struct YearConfig {
     pub default: Option<i32>,
     /// Strategy for expanding two-digit years. Default: [`TwoDigitYearExpansion::SlidingWindow`].
     pub two_digit_expansion: TwoDigitYearExpansion,
+}
+
+impl YearConfig {
+    /// Return the expanded year value when `value` (with `digit_count` original
+    /// digits) is a plausible year for this config, or `None` when it is not.
+    ///
+    /// Only 2-digit and 4-digit numbers are considered:
+    /// - 4-digit values are used as-is.
+    /// - 2-digit values are expanded according to [`TwoDigitYearExpansion`].
+    /// - All other digit counts return `None`.
+    ///
+    /// The expanded value must also fall within the configured `min`/`max`
+    /// bounds.
+    pub fn try_as_year_candidate(&self, value: i16, digit_count: u8) -> Option<i32> {
+        let expanded = match digit_count {
+            4 => value as i32,
+            2 => {
+                let raw = value as i32;
+                match &self.two_digit_expansion {
+                    TwoDigitYearExpansion::Literal => raw,
+                    TwoDigitYearExpansion::Always2000s => 2000 + raw,
+                    TwoDigitYearExpansion::SlidingWindow(window_range) => {
+                        let pivot = window_range.lower_range.max - window_range.lower_range.min;
+                        if raw < pivot {
+                            window_range.lower_range.min + raw
+                        } else {
+                            window_range.upper_range.min + (raw - pivot)
+                        }
+                    }
+                }
+            }
+            _ => return None,
+        };
+        if expanded >= self.min && expanded <= self.max {
+            Some(expanded)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for YearConfig {

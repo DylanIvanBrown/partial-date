@@ -1,9 +1,35 @@
-//! Token interpretation: assigning tokens to date components with unambiguous
-//! overrides and component order resolution.
+//! Token interpretation: assigning tokens to date components.
+//!
+//! # Algorithm
+//!
+//! Tokens split into two groups before any assignment logic runs:
+//!
+//! - **Unambiguous anchors** — `OrdinalDay` is always a day; `MonthName` is
+//!   always a month. They are consumed first and never enter positional
+//!   assignment.
+//!
+//! - **Numeric tokens** — go through three steps:
+//!
+//!   1. **Generate viable assignments** — enumerate every way of assigning the
+//!      numeric tokens to the remaining open slots. A permutation is *viable*
+//!      when every token passes the candidate check for its assigned component
+//!      (delegated to [`DayConfig::try_as_day_candidate`],
+//!      [`MonthConfig::try_as_month_candidate`], and
+//!      [`YearConfig::try_as_year_candidate`]).
+//!
+//!   2. **Score by component count** — prefer assignments that fill more slots.
+//!
+//!   3. **Score by unambiguity then config agreement**:
+//!      - A token is *unambiguous* when it is valid for exactly one of the open
+//!        slots. Unambiguous tokens must go to their forced slot regardless of
+//!        the configured order — the score counts how many tokens are placed in
+//!        their only valid slot.
+//!      - Once unambiguity is equal, count how many token positions agree with
+//!        `component_order`. The configured order is the tiebreaker for tokens
+//!        that could validly be more than one component.
+//!      - Any remaining tie is broken deterministically by positional agreement.
 
-use crate::models::{
-    Config, DateComponent, IsExpected, MonthName, Token, TwoDigitYearExpansion, YearConfig,
-};
+use crate::models::{Config, DateComponent, IsExpected, MonthName, Token};
 
 /// The raw candidates extracted from the token list, before validation.
 ///
@@ -14,601 +40,477 @@ pub type RawDay = Option<(u8, u8)>;
 pub type RawMonth = Option<(u8, Option<MonthName>)>;
 pub type RawYear = Option<i32>;
 
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
 /// Interpret up to 3 tokens as day, month, and year candidates.
 pub fn interpret_tokens(tokens: &[Token], config: &Config) -> (RawDay, RawMonth, RawYear) {
-    // Separate by kind first.
-    let ordinals: Vec<u8> = tokens
-        .iter()
-        .filter_map(|t| match t {
-            Token::OrdinalDay(n) => Some(*n),
-            _ => None,
-        })
-        .collect();
-
-    let month_names: Vec<MonthName> = tokens
-        .iter()
-        .filter_map(|t| match t {
-            Token::MonthName(m) => Some(*m),
-            _ => None,
-        })
-        .collect();
-
-    let numerics: Vec<(i16, u8)> = tokens
-        .iter()
-        .filter_map(|t| match t {
-            Token::Numeric(v, d) => Some((*v, *d)),
-            _ => None,
-        })
-        .collect();
-
     let day_expected = config.day.expected != IsExpected::No;
     let month_expected = config.month.expected != IsExpected::No;
     let year_expected = config.year.expected != IsExpected::No;
 
-    // OrdinalDay tokens are unambiguously a day.
-    let ordinal_day: Option<u8> = ordinals.into_iter().next();
+    // --- Unambiguous anchors ------------------------------------------------
 
-    // MonthName tokens are unambiguously a month.
-    let named_month: Option<MonthName> = month_names.into_iter().next();
+    // OrdinalDay tokens are unambiguously a day ("19th", "3rd").
+    let ordinal_day: Option<u8> = tokens.iter().find_map(|t| match t {
+        Token::OrdinalDay(n) => Some(*n),
+        _ => None,
+    });
 
-    // With a named month, numerics are assigned to day and year slots.
-    if named_month.is_some() {
-        let (day_raw, year_raw) =
-            assign_day_and_year(&numerics, ordinal_day, &config.component_order, config);
-        let month_raw = named_month.map(|m| (m.number(), Some(m)));
-        return (
-            if day_expected { day_raw } else { None },
-            if month_expected { month_raw } else { None },
-            if year_expected { year_raw } else { None },
-        );
-    }
+    // MonthName tokens are unambiguously a month ("October", "jan").
+    let named_month: Option<MonthName> = tokens.iter().find_map(|t| match t {
+        Token::MonthName(m) => Some(*m),
+        _ => None,
+    });
 
-    // No named month — all information comes from numerics and ordinals.
-    // Use positional assignment driven by ComponentOrder, passing IsExpected
-    // flags so disabled slots are never filled.
-    let (day_raw, month_raw, year_raw) = assign_positional(
-        &numerics,
-        ordinal_day,
-        config,
-        day_expected,
-        month_expected,
-        year_expected,
-    );
-
-    (day_raw, month_raw, year_raw)
-}
-
-/// Assign day and year from the numeric tokens when the month is already
-/// known (from a MonthName token).
-fn assign_day_and_year(
-    numerics: &[(i16, u8)],
-    ordinal_day: Option<u8>,
-    order: &crate::models::ComponentOrder,
-    config: &Config,
-) -> (RawDay, RawYear) {
-    // Ordinal always wins as day.
-    if let Some(d) = ordinal_day {
-        // Any remaining numeric is the year.
-        let year = numerics
-            .iter()
-            .find_map(|(v, d)| expand_year(*v, *d, &config.year));
-        return (Some((d, 1)), year);
-    }
-
-    match numerics {
-        [] => (None, None),
-        [(v, d)] => {
-            // One numeric — must figure out if it's a day or year.
-            if let Some(year) = expand_year(*v, *d, &config.year) {
-                // 4-digit → definitely a year; 2-digit could be either.
-                if *d == 4 {
-                    return (None, Some(year));
-                }
-            }
-            // Fits as a day (1–31)?  Treat as day.
-            if *v >= 1 && *v <= 31 {
-                (Some((*v as u8, *d)), None)
-            } else {
-                (None, expand_year(*v, *d, &config.year))
-            }
-        }
-        [(v0, d0), (v1, d1), ..] => {
-            // Two or more numerics. Use component order to determine which slot
-            // (ignoring the month slot, which is already filled) comes first.
-            // The non-month slots in order determine day vs year position.
-            let non_month_in_order = non_month_positions(order);
-
-            // First non-month position in the order gets the first numeric, etc.
-            let first_is_year_slot = non_month_in_order
-                .first()
-                .map(|c| *c == DateComponent::Year)
-                .unwrap_or(false);
-
-            // first_is_year_slot=true  → first numeric is year, second is day
-            // first_is_year_slot=false → first numeric is day,  second is year
-            let (day_num, day_dc, year_num, year_dc) = if first_is_year_slot {
-                (*v1, *d1, *v0, *d0)
-            } else {
-                (*v0, *d0, *v1, *d1)
-            };
-
-            // Unambiguous override: if day_num > 31 it can't be a day; swap.
-            let (day_num, day_dc, year_num, year_dc) = if !(1..=31).contains(&day_num) {
-                (year_num, year_dc, day_num, day_dc)
-            } else {
-                (day_num, day_dc, year_num, year_dc)
-            };
-
-            let day = if (1..=31).contains(&day_num) {
-                Some((day_num as u8, day_dc))
-            } else {
-                None
-            };
-            let year = expand_year(year_num, year_dc, &config.year);
-            (day, year)
-        }
-    }
-}
-
-/// Returns the non-Month components from the order, preserving their relative
-/// order.
-fn non_month_positions(order: &crate::models::ComponentOrder) -> Vec<DateComponent> {
-    [order.first, order.second, order.third]
+    // Collect all numeric tokens. These are the ones that need assignment.
+    let numerics: Vec<(i16, u8)> = tokens
         .iter()
-        .filter(|c| **c != DateComponent::Month)
-        .copied()
-        .collect()
-}
+        .filter_map(|t| match t {
+            Token::Numeric(value, digit_count) => Some((*value, *digit_count)),
+            _ => None,
+        })
+        .collect();
 
-/// Assign day, month, and year purely from numeric tokens using ComponentOrder,
-/// with unambiguous-override rules.
-///
-/// The `day_ok`, `month_ok`, `year_ok` flags suppress slots that are marked
-/// `IsExpected::No` — this ensures disabled components are never filled even
-/// when a matching value is present.
-fn assign_positional(
-    numerics: &[(i16, u8)],
-    ordinal_day: Option<u8>,
-    config: &Config,
-    day_ok: bool,
-    month_ok: bool,
-    year_ok: bool,
-) -> (RawDay, RawMonth, RawYear) {
-    let order = &config.component_order;
+    // --- Determine which slots still need filling ---------------------------
+    //
+    // Open slots are listed in config-order so that the agreement scoring step
+    // can compare token positions directly against the configured ordering.
 
-    let (day_raw, month_raw, year_raw) = match (ordinal_day, numerics) {
-        // Nothing at all.
-        (None, []) => (None, None, None),
+    let day_anchor: Option<u8> = ordinal_day;
+    let month_anchor: Option<(u8, Option<MonthName>)> = named_month.map(|m| (m.number(), Some(m)));
 
-        // Only an ordinal — day only.
-        (Some(d), []) => (Some((d, 1)), None, None),
-
-        // Ordinal + one numeric.
-        (Some(d), [(v, dc)]) => {
-            let (month_raw, year_raw) =
-                assign_month_or_year_from_one(*v, *dc, config, month_ok, year_ok);
-            (Some((d, 1)), month_raw, year_raw)
-        }
-
-        // Ordinal + two numerics — month and year.
-        (Some(d), [(v0, d0), (v1, d1), ..]) => {
-            let (m_val, m_dc, y_val, y_dc) = split_month_year_by_order(*v0, *d0, *v1, *d1, order);
-            let month_raw = to_month_raw(m_val, m_dc);
-            let year_raw = expand_year(y_val, y_dc, &config.year);
-            (Some((d, 1)), month_raw, year_raw)
-        }
-
-        // No ordinal, one numeric.
-        (None, [(v, dc)]) => assign_one_numeric(*v, *dc, config, day_ok, month_ok, year_ok),
-
-        // No ordinal, two numerics.
-        (None, [(v0, d0), (v1, d1)]) => {
-            assign_two_numerics(*v0, *d0, *v1, *d1, config, day_ok, month_ok, year_ok)
-        }
-
-        // No ordinal, three numerics.
-        (None, three_or_more) => assign_three_numerics(three_or_more, config),
-    };
-
-    (
-        if day_ok { day_raw } else { None },
-        if month_ok { month_raw } else { None },
-        if year_ok { year_raw } else { None },
-    )
-}
-
-/// Assign a single numeric token to the most appropriate slot given config.
-fn assign_one_numeric(
-    v: i16,
-    dc: u8,
-    config: &Config,
-    day_ok: bool,
-    month_ok: bool,
-    year_ok: bool,
-) -> (RawDay, RawMonth, RawYear) {
-    // 4-digit number → always year.
-    if dc == 4 {
-        return if year_ok {
-            (None, None, expand_year(v, dc, &config.year))
-        } else {
-            (None, None, None)
-        };
-    }
-
-    // A number > 31 can only be a year (two-digit expansion).
-    if v > 31 {
-        return if year_ok {
-            (None, None, expand_year(v, dc, &config.year))
-        } else {
-            (None, None, None)
-        };
-    }
-
-    // A number > 12 and ≤ 31 prefers to be a day, but can also be a two-digit year.
-    if v > 12 {
-        if day_ok {
-            return (Some((v as u8, dc)), None, None);
-        }
-        // Day is disabled — try as a two-digit year instead.
-        return if year_ok {
-            (None, None, expand_year(v, dc, &config.year))
-        } else {
-            (None, None, None)
-        };
-    }
-
-    // Value ≤ 12: could be day, month, or two-digit year.
-    // Walk the component order, trying the first enabled slot that fits.
-    for component in [
+    let open_slots: Vec<DateComponent> = [
         config.component_order.first,
         config.component_order.second,
         config.component_order.third,
-    ] {
-        match component {
-            DateComponent::Year if year_ok => {
-                return (None, None, expand_year(v, dc, &config.year));
-            }
-            DateComponent::Month if month_ok && (1..=12).contains(&v) => {
-                return (None, to_month_raw(v, dc), None);
-            }
-            DateComponent::Day if day_ok && (1..=31).contains(&v) => {
-                return (Some((v as u8, dc)), None, None);
-            }
-            _ => {}
-        }
-    }
-    (None, None, None)
+    ]
+    .iter()
+    .filter(|&&component| match component {
+        DateComponent::Day => day_anchor.is_none() && day_expected,
+        DateComponent::Month => month_anchor.is_none() && month_expected,
+        DateComponent::Year => year_expected,
+    })
+    .copied()
+    .collect();
+
+    let (numeric_day, numeric_month, numeric_year) =
+        assign_numerics(&numerics, &open_slots, config);
+
+    let raw_day = day_anchor.map(|v| (v, 1u8)).or(numeric_day);
+    let raw_month = month_anchor.or(numeric_month);
+    let raw_year = numeric_year;
+
+    (
+        if day_expected { raw_day } else { None },
+        if month_expected { raw_month } else { None },
+        if year_expected { raw_year } else { None },
+    )
 }
 
-/// Decide whether a single numeric is a month or year (used when day is
-/// already known from an ordinal).
-fn assign_month_or_year_from_one(
-    v: i16,
-    dc: u8,
-    config: &Config,
-    month_ok: bool,
-    year_ok: bool,
-) -> (RawMonth, RawYear) {
-    if dc == 4 {
-        return (
-            None,
-            if year_ok {
-                expand_year(v, dc, &config.year)
-            } else {
-                None
-            },
-        );
-    }
-    if (1..=12).contains(&v) {
-        // Could be month or two-digit year; use order.
-        let order = &config.component_order;
-        let non_day: Vec<DateComponent> = [order.first, order.second, order.third]
-            .iter()
-            .filter(|c| **c != DateComponent::Day)
-            .copied()
-            .collect();
-        if non_day.first() == Some(&DateComponent::Year) {
-            (
-                None,
-                if year_ok {
-                    expand_year(v, dc, &config.year)
-                } else {
-                    None
-                },
-            )
-        } else {
-            (if month_ok { to_month_raw(v, dc) } else { None }, None)
-        }
-    } else {
-        (
-            None,
-            if year_ok {
-                expand_year(v, dc, &config.year)
-            } else {
-                None
-            },
-        )
-    }
+// ---------------------------------------------------------------------------
+// Assignment struct
+// ---------------------------------------------------------------------------
+
+/// A concrete assignment of numeric tokens to date component slots, stored as
+/// indices into the original `numerics` slice.
+///
+/// Using indices rather than values avoids ambiguity when two tokens carry the
+/// same `(value, digit_count)` pair — e.g. `"01/01"` produces two identical
+/// tokens; tracking by index keeps them distinct.
+#[derive(Clone, Debug)]
+struct Assignment {
+    /// Index of the token in `numerics` assigned to the day slot, if any.
+    day_index: Option<usize>,
+    /// Index of the token in `numerics` assigned to the month slot, if any.
+    month_index: Option<usize>,
+    /// Index of the token in `numerics` assigned to the year slot, if any.
+    year_index: Option<usize>,
 }
 
-/// Assign two numeric tokens to (day, month, year) — one will be NotFound.
-#[allow(clippy::too_many_arguments)]
-fn assign_two_numerics(
-    v0: i16,
-    d0: u8,
-    v1: i16,
-    d1: u8,
-    config: &Config,
-    day_ok: bool,
-    month_ok: bool,
-    year_ok: bool,
-) -> (RawDay, RawMonth, RawYear) {
-    // If either is 4-digit, it is the year.
-    let (year_val, year_dc, other_val, other_dc) = if d0 == 4 {
-        (v0, d0, v1, d1)
-    } else if d1 == 4 {
-        (v1, d1, v0, d0)
-    } else {
-        // Neither is 4-digit.
-        if v0 > 31 {
-            // recurse with order swapped so the large value is in position 1
-            return assign_two_numerics(v1, d1, v0, d0, config, day_ok, month_ok, year_ok);
-        }
-        if v1 > 31 {
-            let year = if year_ok {
-                expand_year(v1, d1, &config.year)
-            } else {
-                None
-            };
-            let day_or_month = assign_remaining_as_day_or_month(v0, d0, config);
-            return match day_or_month {
-                DayOrMonth::Day if day_ok => (Some((v0 as u8, d0)), None, year),
-                DayOrMonth::Month if month_ok => (None, to_month_raw(v0, d0), year),
-                _ => (None, None, year),
-            };
-        }
-        // Both ≤ 31 — no clear year; split as day/month.
-        return assign_day_and_month(v0, d0, v1, d1, config);
-    };
-
-    let year = if year_ok {
-        expand_year(year_val, year_dc, &config.year)
-    } else {
-        None
-    };
-    let day_or_month = assign_remaining_as_day_or_month(other_val, other_dc, config);
-    match day_or_month {
-        DayOrMonth::Day if day_ok => (Some((other_val as u8, other_dc)), None, year),
-        DayOrMonth::Month if month_ok => (None, to_month_raw(other_val, other_dc), year),
-        _ => (None, None, year),
-    }
-}
-
-enum DayOrMonth {
-    Day,
-    Month,
-}
-
-/// Decide whether a single remaining numeric (after year is known) is a day
-/// or a month.
-fn assign_remaining_as_day_or_month(v: i16, _dc: u8, config: &Config) -> DayOrMonth {
-    if v > 12 {
-        return DayOrMonth::Day; // Can't be a month.
-    }
-    // Ambiguous — use component order: whichever of Day/Month appears first.
-    let order = &config.component_order;
-    for component in [order.first, order.second, order.third] {
-        match component {
-            DateComponent::Day => return DayOrMonth::Day,
-            DateComponent::Month => return DayOrMonth::Month,
-            DateComponent::Year => {}
-        }
-    }
-    DayOrMonth::Day // Fallback.
-}
-
-/// Assign two numerics to (day, month) with no year.
-fn assign_day_and_month(
-    v0: i16,
-    d0: u8,
-    v1: i16,
-    d1: u8,
-    config: &Config,
-) -> (RawDay, RawMonth, RawYear) {
-    // Unambiguous override: a value > 12 can only be a day.
-    // TODO use a validate function on the Month struct to check if the value could be a month instead of having these numbers here
-    if v0 > 12 && v1 <= 12 {
-        return (Some((v0 as u8, d0)), to_month_raw(v1, d1), None);
-    }
-    if v1 > 12 && v0 <= 12 {
-        return (Some((v1 as u8, d1)), to_month_raw(v0, d0), None);
+impl Assignment {
+    fn component_count(&self) -> usize {
+        self.day_index.is_some() as usize
+            + self.month_index.is_some() as usize
+            + self.year_index.is_some() as usize
     }
 
-    // Both ≤ 12 — use component order.
-    let order = &config.component_order;
-    // Map first/second numeric to first/second non-Year component in order.
-    let non_year: Vec<DateComponent> = [order.first, order.second, order.third]
-        .iter()
-        .filter(|c| **c != DateComponent::Year)
-        .copied()
-        .collect();
-
-    let (first_component, second_component) = match non_year.as_slice() {
-        [a, b, ..] => (*a, *b),
-        _ => (DateComponent::Day, DateComponent::Month),
-    };
-
-    // TODO: These lines need more explanation. It is quite difficult to parse.
-    let (day_val, day_dc, month_val, month_dc) = match first_component {
-        DateComponent::Day => (v0, d0, v1, d1),
-        DateComponent::Month => (v1, d1, v0, d0),
-        DateComponent::Year => (v0, d0, v1, d1), // Shouldn't happen. // TODO: Expand on this and fix it if we can in some way. A match arm that shouldn't happen is a code smell.
-    };
-    let _ = second_component; // Used implicitly via the swap above. // TODO: This is a code smell. It's very odd to have a line here assigning this to _ that is never needed to be used.
-
-    // TODO: Make this a validate function on the Day struct, instead of encoding the key range values here
-    if (1..=31).contains(&day_val) {
-        (
-            Some((day_val as u8, day_dc)),
-            to_month_raw(month_val, month_dc),
-            None,
-        )
-    } else {
-        (None, to_month_raw(month_val, month_dc), None)
-    }
-}
-
-/// Assign three numeric tokens to (day, month, year) using ComponentOrder.
-fn assign_three_numerics(numerics: &[(i16, u8)], config: &Config) -> (RawDay, RawMonth, RawYear) {
-    let order = &config.component_order;
-    let positions = [order.first, order.second, order.third];
-
-    // Build initial positional assignment.
-    let mut day_val: Option<(i16, u8)> = None;
-    let mut month_val: Option<(i16, u8)> = None;
-    let mut year_val: Option<(i16, u8)> = None;
-
-    // TODO: In these cases can we not just try all 3 values against each date component, first using the format if provided and then return all the matching cases and we can then compare those for disambiguation
-    for (i, component) in positions.iter().enumerate() {
-        if let Some(&(v, dc)) = numerics.get(i) {
-            match component {
-                DateComponent::Day => day_val = Some((v, dc)),
-                DateComponent::Month => month_val = Some((v, dc)),
-                DateComponent::Year => year_val = Some((v, dc)),
-            }
-        }
-    }
-
-    // Unambiguous override: if a 4-digit value ended up in a day or month
-    // slot, and the year slot has a 1-2 digit value, swap them.
-    if let (Some((dv, 4)), Some((yv, ydc))) = (day_val, year_val)
-        && ydc <= 2
-    {
-        year_val = Some((dv, 4));
-        day_val = Some((yv, ydc));
-    }
-    if let (Some((mv, 4)), Some((yv, ydc))) = (month_val, year_val)
-        && ydc <= 2
-    {
-        year_val = Some((mv, 4));
-        month_val = Some((yv, ydc));
-    }
-
-    // Unambiguous override: when the month component comes BEFORE the day
-    // component in the configured order (e.g. MDY), a value > 12 in the month
-    // slot that is ≤ 31 must be a day — swap with the day slot if the day
-    // slot's value is a valid month (≤ 12).
-    //
-    // We only apply this when month precedes day in the order, because that is
-    // the configuration most likely to produce accidental day/month swaps in
-    // real input (e.g. "31/12/19" with MDY).  When day precedes month (e.g.
-    // DMY), we trust the positional assignment and let validation reject an
-    // out-of-range month value.
-    // TODO: Can we not make this assumption and instead always confirm and assign the month only to the valid value?
-    let month_before_day = [order.first, order.second, order.third]
-        .iter()
-        .position(|c| *c == DateComponent::Month)
-        < [order.first, order.second, order.third]
-            .iter()
-            .position(|c| *c == DateComponent::Day);
-
-    if month_before_day
-        && let Some((mv, mdc)) = month_val
-        && mv > 12
-        && mv <= 31
-        && let Some((dv, ddc)) = day_val
-        && dv <= 12
-    {
-        month_val = Some((dv, ddc));
-        day_val = Some((mv, mdc));
-    }
-
-    let raw_day = day_val.and_then(|(v, dc)| {
-        // TODO: having this range hard coded everywhere is weird. It should come from the Day struct
-        if (1..=31).contains(&v) {
-            Some((v as u8, dc))
+    /// The component (if any) that the token at `token_index` was assigned to.
+    fn component_for_token(&self, token_index: usize) -> Option<DateComponent> {
+        if self.day_index == Some(token_index) {
+            Some(DateComponent::Day)
+        } else if self.month_index == Some(token_index) {
+            Some(DateComponent::Month)
+        } else if self.year_index == Some(token_index) {
+            Some(DateComponent::Year)
         } else {
             None
         }
-    });
-    let raw_month = month_val.and_then(|(v, dc)| to_month_raw(v, dc));
-    let raw_year = year_val.and_then(|(v, dc)| expand_year(v, dc, &config.year));
+    }
+
+    /// Retrieve the `(value, digit_count)` of the token assigned to
+    /// `component`, or `None` if that slot is unfilled.
+    fn token_for(&self, component: DateComponent, numerics: &[(i16, u8)]) -> Option<(i16, u8)> {
+        let index = match component {
+            DateComponent::Day => self.day_index?,
+            DateComponent::Month => self.month_index?,
+            DateComponent::Year => self.year_index?,
+        };
+        numerics.get(index).copied()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Core assignment logic
+// ---------------------------------------------------------------------------
+
+/// Assign `numerics` to `open_slots`, returning raw day/month/year candidates.
+fn assign_numerics(
+    numerics: &[(i16, u8)],
+    open_slots: &[DateComponent],
+    config: &Config,
+) -> (RawDay, RawMonth, RawYear) {
+    if numerics.is_empty() || open_slots.is_empty() {
+        return (None, None, None);
+    }
+
+    let viable = generate_viable_assignments(numerics, open_slots, config);
+
+    if viable.is_empty() {
+        return (None, None, None);
+    }
+
+    let best = pick_best_assignment(viable, numerics, config);
+
+    // Convert the winning assignment into typed raw values using the config
+    // methods — no range literals in this file.
+    let raw_day = best
+        .token_for(DateComponent::Day, numerics)
+        .and_then(|(value, digit_count)| {
+            config
+                .day
+                .try_as_day_candidate(value, digit_count)
+                .map(|v| (v, digit_count))
+        });
+
+    let raw_month =
+        best.token_for(DateComponent::Month, numerics)
+            .and_then(|(value, digit_count)| {
+                config
+                    .month
+                    .try_as_month_candidate(value, digit_count)
+                    .map(|number| {
+                        let name = MonthName::try_from(number).ok();
+                        (number, name)
+                    })
+            });
+
+    let raw_year = best
+        .token_for(DateComponent::Year, numerics)
+        .and_then(|(value, digit_count)| config.year.try_as_year_candidate(value, digit_count));
 
     (raw_day, raw_month, raw_year)
 }
 
-/// Split two numerics into (month, year) using the component order, for the
-/// case where the day is already known from an ordinal.
-fn split_month_year_by_order(
-    v0: i16,
-    d0: u8,
-    v1: i16,
-    d1: u8,
-    order: &crate::models::ComponentOrder,
-) -> (i16, u8, i16, u8) {
-    // Find which of Month/Year comes first in the order (ignoring Day).
-    let non_day: Vec<DateComponent> = [order.first, order.second, order.third]
-        .iter()
-        .filter(|c| **c != DateComponent::Day)
-        .copied()
-        .collect();
-
-    let first_is_month = non_day.first() == Some(&DateComponent::Month);
-
-    // Unambiguous override: 4-digit is always year.
-    if d0 == 4 {
-        return (v1, d1, v0, d0); // (month, year)
-    }
-    if d1 == 4 {
-        return (v0, d0, v1, d1);
-    }
-
-    if first_is_month {
-        (v0, d0, v1, d1)
-    } else {
-        (v1, d1, v0, d0)
-    }
-}
-
-/// Convert a raw (value, digit_count) numeric into an optional month tuple.
+/// Enumerate every viable assignment of `numerics` tokens to `open_slots`.
 ///
-/// The `MonthName` is derived from the number when possible, so that
-/// numeric month inputs (e.g. `"6"` in `"18/6. 2013"`) also populate
-/// `month.name`.
-fn to_month_raw(v: i16, _dc: u8) -> Option<(u8, Option<MonthName>)> {
-    if (1..=12).contains(&v) {
-        let name = MonthName::try_from(v as u8).ok();
-        Some((v as u8, name))
-    } else {
-        None
-    }
-}
+/// A permutation is viable when every token passes the candidate check for its
+/// assigned slot. We try all counts from the maximum possible down to 1,
+/// stopping as soon as any viable assignment is found — the scoring step then
+/// selects the best among them. This ensures that when no full assignment is
+/// viable (e.g. two tokens are both forced to the same slot), partial
+/// assignments are still considered.
+fn generate_viable_assignments(
+    numerics: &[(i16, u8)],
+    open_slots: &[DateComponent],
+    config: &Config,
+) -> Vec<Assignment> {
+    let max_token_count = numerics.len().min(open_slots.len());
+    let mut viable: Vec<Assignment> = Vec::new();
 
-/// Expand a raw numeric value into a full year, given its original digit count.
-///
-/// - 4-digit values are returned unchanged.
-/// - 2-digit values are expanded according to `config.two_digit_expansion`.
-/// - Any other digit count returns `None` (invalid year).
-fn expand_year(value: i16, digit_count: u8, config: &YearConfig) -> Option<i32> {
-    match digit_count {
-        4 => Some(value as i32),
-        2 => {
-            let raw = value as i32;
-            let expanded = match &config.two_digit_expansion {
-                TwoDigitYearExpansion::Literal => raw,
-                TwoDigitYearExpansion::Always2000s => 2000 + raw,
-                TwoDigitYearExpansion::SlidingWindow(wr) => {
-                    // The lower range covers values 0..pivot, the upper covers pivot..100.
-                    let pivot = wr.lower_range.max - wr.lower_range.min;
-                    if raw < pivot {
-                        wr.lower_range.min + raw
-                    } else {
-                        wr.upper_range.min + (raw - pivot)
+    // Try from the most tokens down to 1. Stop at the first count that yields
+    // at least one viable assignment — there is no point looking at smaller
+    // counts if we already have valid candidates.
+    for token_count in (1..=max_token_count).rev() {
+        // Choose which `token_count` tokens to use (subset of all numerics).
+        for token_indices in combinations(numerics.len(), token_count) {
+            // Choose which `token_count` slots to fill (subset of open_slots).
+            for slot_indices in combinations(open_slots.len(), token_count) {
+                let chosen_slots: Vec<DateComponent> =
+                    slot_indices.iter().map(|&i| open_slots[i]).collect();
+
+                // Try every ordering of the chosen tokens into the chosen slots.
+                for token_permutation in permutations(token_count) {
+                    let mut assignment = Assignment {
+                        day_index: None,
+                        month_index: None,
+                        year_index: None,
+                    };
+                    let mut all_valid = true;
+
+                    for (slot_position, &perm_index) in token_permutation.iter().enumerate() {
+                        // Map permutation index → actual token index in `numerics`.
+                        let token_index = token_indices[perm_index];
+                        let (value, digit_count) = numerics[token_index];
+                        let slot = chosen_slots[slot_position];
+
+                        // Validity is delegated entirely to the config methods —
+                        // no range literals here.
+                        let valid = match slot {
+                            DateComponent::Day => config
+                                .day
+                                .try_as_day_candidate(value, digit_count)
+                                .is_some(),
+                            DateComponent::Month => config
+                                .month
+                                .try_as_month_candidate(value, digit_count)
+                                .is_some(),
+                            DateComponent::Year => config
+                                .year
+                                .try_as_year_candidate(value, digit_count)
+                                .is_some(),
+                        };
+
+                        if !valid {
+                            all_valid = false;
+                            break;
+                        }
+
+                        match slot {
+                            DateComponent::Day => assignment.day_index = Some(token_index),
+                            DateComponent::Month => assignment.month_index = Some(token_index),
+                            DateComponent::Year => assignment.year_index = Some(token_index),
+                        }
+                    }
+
+                    if all_valid {
+                        viable.push(assignment);
                     }
                 }
-            };
-            Some(expanded)
+            }
         }
-        _ => None, // 1, 3, 5+ digit numbers are not valid years
+
+        // Stop descending once we have found at least one viable assignment.
+        // Smaller token counts would only produce results with fewer components,
+        // which the scoring step would rank below what we already have.
+        if !viable.is_empty() {
+            break;
+        }
     }
+
+    viable
+}
+
+/// Choose the best assignment from a non-empty list of viable candidates.
+///
+/// Scoring priority (all maximised, sort descending):
+///
+/// 1. **Component count** — more filled slots is better.
+///
+/// 2. **Unambiguity score** — count how many tokens in this assignment are
+///    placed in the *only* slot they can validly fill across all open slots.
+///    A token that could be Day or Month is ambiguous; a token that can only be
+///    Day (value > 12) or only be Year (4-digit) is unambiguous. Unambiguous
+///    placements must be respected before the configured order is consulted.
+///
+/// 3. **Agreement score** — for the ambiguous tokens, count how many are placed
+///    in the slot that `component_order` prescribes for their input position.
+///    This is the primary mechanism for resolving genuinely ambiguous inputs.
+///
+/// 4. **Deterministic tiebreaker** — positional agreement with `component_order`
+///    applied as a stable final sort key.
+fn pick_best_assignment(
+    mut viable: Vec<Assignment>,
+    numerics: &[(i16, u8)],
+    config: &Config,
+) -> Assignment {
+    let order = [
+        config.component_order.first,
+        config.component_order.second,
+        config.component_order.third,
+    ];
+
+    let mut scored: Vec<(usize, usize, usize, Assignment)> = viable
+        .drain(..)
+        .map(|assignment| {
+            let component_count = assignment.component_count();
+
+            // Unambiguity score: count slots that are filled by the *only*
+            // token that can validly occupy them.
+            //
+            // For each filled slot in this assignment, check whether any other
+            // token (not the one assigned here) could also fill that slot. If
+            // no other token could, the slot is "singly-valid" and the
+            // assignment that fills it correctly is more constrained.
+            //
+            // This correctly handles "31/06" with MDY: only token 1 (6) can
+            // fill the Month slot (token 0 = 31 cannot be a month). So the
+            // assignment placing 6 as Month scores 1 here, while assignments
+            // placing 31 or nothing as Month score 0. This ranks the correct
+            // assignment above alternatives that would place 6 as Day or Year.
+            let unambiguity_score: usize = [
+                (DateComponent::Day, assignment.day_index),
+                (DateComponent::Month, assignment.month_index),
+                (DateComponent::Year, assignment.year_index),
+            ]
+            .iter()
+            .filter(|(slot, assigned_index)| {
+                let Some(assigned_token_index) = assigned_index else {
+                    return false;
+                };
+                // Count how many tokens are valid for this slot.
+                let valid_token_count = numerics
+                    .iter()
+                    .enumerate()
+                    .filter(|(token_index, token)| {
+                        let (value, digit_count) = **token;
+                        // Only count tokens that are actually assigned to some
+                        // slot (unassigned tokens don't constrain the slot).
+                        let is_assigned = assignment.component_for_token(*token_index).is_some();
+                        if !is_assigned {
+                            return false;
+                        }
+                        match slot {
+                            DateComponent::Day => config
+                                .day
+                                .try_as_day_candidate(value, digit_count)
+                                .is_some(),
+                            DateComponent::Month => config
+                                .month
+                                .try_as_month_candidate(value, digit_count)
+                                .is_some(),
+                            DateComponent::Year => config
+                                .year
+                                .try_as_year_candidate(value, digit_count)
+                                .is_some(),
+                        }
+                    })
+                    .count();
+                // The slot is singly-valid when exactly one assigned token can
+                // fill it, and the assignment correctly places that token here.
+                valid_token_count == 1
+                    && assignment.component_for_token(*assigned_token_index) == Some(*slot)
+            })
+            .count();
+
+            // Agreement score: count how many tokens at input position `i` are
+            // assigned to `order[i]`. Resolves ambiguity for tokens that could
+            // validly fill more than one slot.
+            let agreement_score: usize = numerics
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    let prescribed = match order.get(*index) {
+                        Some(c) => *c,
+                        None => return false,
+                    };
+                    assignment.component_for_token(*index) == Some(prescribed)
+                })
+                .count();
+
+            (
+                component_count,
+                unambiguity_score,
+                agreement_score,
+                assignment,
+            )
+        })
+        .collect();
+
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0) // more components first
+            .then(b.1.cmp(&a.1)) // more unambiguous placements first
+            .then(b.2.cmp(&a.2)) // higher agreement with config order first
+            .then_with(|| {
+                // Deterministic tiebreaker: compare raw positional agreement.
+                let a_score = positional_order_score(&a.3, numerics, &order);
+                let b_score = positional_order_score(&b.3, numerics, &order);
+                b_score.cmp(&a_score)
+            })
+    });
+
+    scored.remove(0).3
+}
+
+/// Count how many tokens at their original input positions are assigned to the
+/// component that `order[position]` prescribes.
+fn positional_order_score(
+    assignment: &Assignment,
+    numerics: &[(i16, u8)],
+    order: &[DateComponent; 3],
+) -> usize {
+    numerics
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            let prescribed = match order.get(*index) {
+                Some(c) => *c,
+                None => return false,
+            };
+            assignment.component_for_token(*index) == Some(prescribed)
+        })
+        .count()
+}
+
+// ---------------------------------------------------------------------------
+// Combinatorics helpers
+// ---------------------------------------------------------------------------
+
+/// Return all combinations of `choose` indices from `0..total`.
+fn combinations(total: usize, choose: usize) -> Vec<Vec<usize>> {
+    if choose == 0 {
+        return vec![vec![]];
+    }
+    if choose > total {
+        return vec![];
+    }
+    let mut result: Vec<Vec<usize>> = Vec::new();
+    let mut indices: Vec<usize> = (0..choose).collect();
+    loop {
+        result.push(indices.clone());
+        let mut i = choose;
+        loop {
+            if i == 0 {
+                return result;
+            }
+            i -= 1;
+            if indices[i] < total - choose + i {
+                break;
+            }
+        }
+        indices[i] += 1;
+        for j in i + 1..choose {
+            indices[j] = indices[j - 1] + 1;
+        }
+    }
+}
+
+/// Return all permutations of `0..n` as index vectors.
+fn permutations(n: usize) -> Vec<Vec<usize>> {
+    if n == 0 {
+        return vec![vec![]];
+    }
+    let mut result: Vec<Vec<usize>> = Vec::new();
+    let mut indices: Vec<usize> = (0..n).collect();
+    result.push(indices.clone());
+    loop {
+        // Knuth's algorithm L: next permutation in lexicographic order.
+        let mut i = n - 1;
+        while i > 0 && indices[i - 1] >= indices[i] {
+            i -= 1;
+        }
+        if i == 0 {
+            break;
+        }
+        let pivot = i - 1;
+        let mut j = n - 1;
+        while indices[j] <= indices[pivot] {
+            j -= 1;
+        }
+        indices.swap(pivot, j);
+        indices[i..].reverse();
+        result.push(indices.clone());
+    }
+    result
 }
