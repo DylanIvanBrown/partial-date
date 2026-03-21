@@ -438,12 +438,13 @@ fn assign_day_and_month(
         _ => (DateComponent::Day, DateComponent::Month),
     };
 
+    // TODO: These lines need more explanation. It is quite difficult to parse.
     let (day_val, day_dc, month_val, month_dc) = match first_component {
         DateComponent::Day => (v0, d0, v1, d1),
         DateComponent::Month => (v1, d1, v0, d0),
         DateComponent::Year => (v0, d0, v1, d1), // Shouldn't happen. // TODO: Expand on this and fix it if we can in some way. A match arm that shouldn't happen is a code smell.
     };
-    let _ = second_component; // Used implicitly via the swap above.
+    let _ = second_component; // Used implicitly via the swap above. // TODO: This is a code smell. It's very odd to have a line here assigning this to _ that is never needed to be used.
 
     // TODO: Make this a validate function on the Day struct, instead of encoding the key range values here
     if (1..=31).contains(&day_val) {
@@ -467,6 +468,7 @@ fn assign_three_numerics(numerics: &[(i16, u8)], config: &Config) -> (RawDay, Ra
     let mut month_val: Option<(i16, u8)> = None;
     let mut year_val: Option<(i16, u8)> = None;
 
+    // TODO: In these cases can we not just try all 3 values against each date component, first using the format if provided and then return all the matching cases and we can then compare those for disambiguation
     for (i, component) in positions.iter().enumerate() {
         if let Some(&(v, dc)) = numerics.get(i) {
             match component {
@@ -522,6 +524,7 @@ fn assign_three_numerics(numerics: &[(i16, u8)], config: &Config) -> (RawDay, Ra
     }
 
     let raw_day = day_val.and_then(|(v, dc)| {
+        // TODO: having this range hard coded everywhere is weird. It should come from the Day struct
         if (1..=31).contains(&v) {
             Some((v as u8, dc))
         } else {
