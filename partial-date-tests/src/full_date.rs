@@ -504,17 +504,36 @@ fn full_date_natural_language_with_noise_characters() {
 }
 
 /// "31 December 2o14" — OCR-style typo where the digit `0` is replaced by
-/// letter `o`. The tokeniser splits "2o14" on the digit-to-alpha boundary,
-/// producing Numeric(2,1) and discarding "o14" (not a month name or number).
-/// With month anchored to December, the remaining numerics (31,2) and (2,1)
-/// are assigned to the Day and Year slots. Only (31,2) can be a Year (1-digit
-/// values are rejected as years); (31,2) also fits Day. The algorithm places
-/// the only year-capable token as Year=2031 and the remaining token as Day=2.
-/// This is a known limitation: OCR corruption of the year creates a spurious
-/// day value. Callers dealing with OCR input should validate results.
+/// letter `o`. With `letter_o_substitution` enabled (the default), the
+/// tokeniser recognises that `"2o14"` consists entirely of digits and the
+/// letter O, substitutes O→0 before boundary splitting, and produces
+/// `Numeric(2014, 4)`. The full date is therefore correctly resolved as
+/// day=31, month=December, year=2014.
 #[test]
-fn full_date_year_with_ocr_typo_not_found() {
+fn full_date_year_with_ocr_typo_resolved() {
     let result = extract(input("31 December  2o14"));
+
+    assert_eq!(result.day.value, Extracted::Found(31));
+    assert_eq!(result.month.number, Extracted::Found(12));
+    assert_eq!(result.month.name, Extracted::Found(MonthName::December));
+    assert_eq!(result.year.value, Extracted::Found(2014));
+}
+
+/// With `letter_o_substitution` disabled, "31 December 2o14" cannot recover
+/// the year from the OCR-corrupted token. The tokeniser splits "2o14" on the
+/// digit-to-alpha boundary, producing Numeric(2,1) and discarding "o14" (not
+/// a month name or number). With month anchored to December, the remaining
+/// numerics (31,2) and (2,1) are assigned to the Day and Year slots.
+/// Only (31,2) can be a Year (1-digit values are rejected as years); (31,2)
+/// also fits Day. The algorithm places the only year-capable token as
+/// Year=2031 and the remaining token as Day=2.
+#[test]
+fn full_date_year_with_ocr_typo_disabled_substitution() {
+    let config = Config {
+        letter_o_substitution: false,
+        ..Default::default()
+    };
+    let result = extract(input_with_config("31 December  2o14", config));
 
     assert_eq!(result.day.value, Extracted::Found(2));
     assert_eq!(result.month.number, Extracted::Found(12));

@@ -22,6 +22,7 @@
 pub mod extract;
 pub mod levenshtein;
 pub mod models;
+pub mod word_numbers;
 
 // Internal modules
 mod interpreter;

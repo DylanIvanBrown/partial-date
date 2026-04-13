@@ -302,15 +302,16 @@ fn year_empty_input() {
     assert!(result.year.value.is_not_found());
 }
 
-/// Three-digit numbers should not be treated as years when year is expected.
+/// Three-digit numbers (100–999) are treated as literal years.
+/// This supports word-number-replaced inputs like "one hundred" → "100" → year=100.
 #[rstest]
-#[case("123")]
-#[case("999")]
-fn year_three_digit_not_valid(#[case] utterance: &str) {
+#[case("123", 123)]
+#[case("999", 999)]
+fn year_three_digit_is_valid(#[case] utterance: &str, #[case] expected_year: i32) {
     let input = input_with_config(utterance, year_only_config());
     let result = extract(input);
 
-    assert!(result.year.value.is_not_found());
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
 }
 
 /// Five-digit numbers should not be treated as years.

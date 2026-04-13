@@ -99,6 +99,30 @@ mod helpers {
         }
     }
 
+    /// Year-only config with `single_digit_year_expansion` enabled.
+    ///
+    /// Use this when testing inputs where a single digit (1–9) should be
+    /// interpreted as a year by prepending a zero and expanding via the
+    /// default two-digit sliding-window strategy.
+    pub fn year_only_config_single_digit() -> Config {
+        Config {
+            day: DayConfig {
+                expected: IsExpected::No,
+                ..Default::default()
+            },
+            month: MonthConfig {
+                expected: IsExpected::No,
+                ..Default::default()
+            },
+            year: YearConfig {
+                expected: IsExpected::Yes,
+                single_digit_year_expansion: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
     /// Build a config with a specific component order.
     pub fn config_with_order(order: ComponentOrder) -> Config {
         Config {

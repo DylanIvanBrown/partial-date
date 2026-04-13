@@ -40,6 +40,12 @@ fn default_config_has_sensible_defaults() {
     assert_eq!(config.component_order, ComponentOrder::default());
     assert!(!config.no_separator);
     assert!(config.extra_separators.is_empty());
+
+    // Letter-O substitution is enabled by default.
+    assert!(config.letter_o_substitution);
+
+    // Single-digit year expansion is disabled by default.
+    assert!(!config.year.single_digit_year_expansion);
 }
 
 /// Default DayConfig independently.
@@ -562,6 +568,223 @@ fn window_range_new_gap(#[case] lower: Range, #[case] upper: Range) {
     let result = WindowRange::new(lower, upper);
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), WindowRangeError::Gap));
+}
+
+// -------------------------------------------------------------------------
+// Config: letter_o_substitution
+// -------------------------------------------------------------------------
+
+/// When `letter_o_substitution` is enabled (the default), a token that looks
+/// like a number but contains the letter O is interpreted with O→0 applied.
+/// This covers common OCR and typing errors such as "2O24" being entered
+/// instead of "2024".
+#[rstest]
+#[case("2o24", 2024)]
+#[case("2O25", 2025)]
+#[case("2O00", 2000)]
+#[case("19oo", 1900)]
+#[case("21OO", 2100)]
+#[case("ooo1", 1)]
+fn config_letter_o_substitution_enabled_year(#[case] utterance: &str, #[case] expected_year: i32) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        letter_o_substitution: true,
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// When `letter_o_substitution` is disabled, a token whose year-significance
+/// depends entirely on the O→0 substitution is not recognised.  These cases
+/// use inputs where the non-O numeric fragments are too short (1 digit) to be
+/// a valid year on their own, so disabling substitution leaves no valid year.
+///
+/// For example `"2ooo"` → without substitution the tokeniser produces only
+/// `Numeric(2, 1)` (one digit); 1-digit values are not valid year candidates,
+/// so the year is NotFound.
+#[rstest]
+#[case("2ooo")]
+#[case("2OOO")]
+#[case("1oo4")]
+fn config_letter_o_substitution_disabled_year_not_found(#[case] utterance: &str) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        letter_o_substitution: false,
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert!(result.year.value.is_not_found());
+}
+
+/// When `letter_o_substitution` is enabled, the substitution does NOT apply to
+/// a token that is a valid month name containing the letter O (e.g. "october",
+/// "november"). The month name classification takes precedence over numeric
+/// substitution because the sub-token produced by sub_split_on_boundary for a
+/// word like "october" contains non-O alphabetic characters, so the O-only
+/// check never fires.
+#[rstest]
+#[case("october", 10)]
+#[case("november", 11)]
+#[case("oct", 10)]
+fn config_letter_o_substitution_does_not_affect_month_names(
+    #[case] utterance: &str,
+    #[case] expected_month: u8,
+) {
+    let config = Config {
+        month: MonthConfig {
+            expected: IsExpected::Yes,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        year: YearConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        letter_o_substitution: true,
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert_eq!(result.month.number, Extracted::Found(expected_month));
+}
+
+// -------------------------------------------------------------------------
+// Config: single_digit_year_expansion
+// -------------------------------------------------------------------------
+
+/// When `single_digit_year_expansion` is enabled, a single-digit token is
+/// treated as a two-digit year with a leading zero prepended (`5` → `05`),
+/// then expanded by the configured `two_digit_expansion` strategy.
+///
+/// With the default `SlidingWindow` strategy `0`–`49` map to 2000–2049, so
+/// `5` → `05` → `2005`.
+#[rstest]
+#[case("1", 2001)]
+#[case("5", 2005)]
+#[case("9", 2009)]
+fn config_single_digit_year_expansion_sliding_window(
+    #[case] utterance: &str,
+    #[case] expected_year: i32,
+) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            single_digit_year_expansion: true,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// With `single_digit_year_expansion` and `TwoDigitYearExpansion::Literal`,
+/// a single-digit value is treated as the literal year `0N` (e.g. `5` → year 5).
+/// This is useful for historical dates where year 5 genuinely means AD 5.
+#[rstest]
+#[case("1", 1)]
+#[case("5", 5)]
+#[case("9", 9)]
+fn config_single_digit_year_expansion_literal(#[case] utterance: &str, #[case] expected_year: i32) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            single_digit_year_expansion: true,
+            two_digit_expansion: TwoDigitYearExpansion::Literal,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// When `single_digit_year_expansion` is disabled (the default), a lone
+/// single-digit token is never treated as a year — it can only be a day or
+/// month.
+#[rstest]
+#[case("1")]
+#[case("5")]
+#[case("9")]
+fn config_single_digit_year_expansion_disabled_year_not_found(#[case] utterance: &str) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            single_digit_year_expansion: false,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert!(result.year.value.is_not_found());
+}
+
+/// Single-digit year expansion applies when day and month are already filled
+/// by other tokens, leaving the single digit for the year slot.
+/// Input: "1 January 5" (DMY) — day=1 (ordinal), month=January (name),
+/// year=5 → expanded to 2005 with sliding window.
+#[test]
+fn config_single_digit_year_expansion_with_full_date_context() {
+    let config = Config {
+        year: YearConfig {
+            single_digit_year_expansion: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config("1 January 5", config));
+    assert_eq!(result.day.value, Extracted::Found(1));
+    assert_eq!(result.month.number, Extracted::Found(1));
+    assert_eq!(result.year.value, Extracted::Found(2005));
 }
 
 /// A custom WindowRange can be used in TwoDigitYearExpansion.

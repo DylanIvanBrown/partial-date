@@ -413,6 +413,90 @@ fn no_separator_falls_through_for_non_digit_strings() {
 }
 
 // -------------------------------------------------------------------------
+// Letter-O substitution
+// -------------------------------------------------------------------------
+
+/// Tokens consisting entirely of digits and the letter O are treated as
+/// numerics with O→0 applied when `letter_o_substitution` is enabled (the
+/// default).
+#[rstest]
+#[case("2o24", Token::Numeric(2024, 4))]
+#[case("2O25", Token::Numeric(2025, 4))]
+#[case("2O00", Token::Numeric(2000, 4))]
+#[case("19oo", Token::Numeric(1900, 4))]
+#[case("21OO", Token::Numeric(2100, 4))]
+#[case("ooo1", Token::Numeric(1, 4))]
+#[case("o6", Token::Numeric(6, 2))]
+fn letter_o_substitution_enabled(#[case] utterance: &str, #[case] expected: Token) {
+    assert_eq!(tokenise(utterance, &Config::default()), vec![expected]);
+}
+
+/// When `letter_o_substitution` is disabled, the O→0 substitution is not
+/// performed at the chunk level, so `sub_split_on_boundary` splits the chunk
+/// at digit↔alpha boundaries as normal.  Each resulting purely-numeric
+/// fragment is still tokenised.  For example `"2o24"` splits into `"2"`,
+/// `"o"`, and `"24"` — the `"o"` portion is not a valid month name and is
+/// dropped, but `"2"` and `"24"` survive as `Numeric` tokens.
+///
+/// This means disabling substitution does *not* drop the token entirely;
+/// it prevents the whole-chunk substitution that produces a single four-digit
+/// token (e.g. `Numeric(2024, 4)`), leaving the split fragments instead.
+#[rstest]
+#[case("2o24", vec![Token::Numeric(2, 1), Token::Numeric(24, 2)])]
+#[case("2O25", vec![Token::Numeric(2, 1), Token::Numeric(25, 2)])]
+#[case("19oo", vec![Token::Numeric(19, 2)])]
+#[case("21OO", vec![Token::Numeric(21, 2)])]
+fn letter_o_substitution_disabled_splits_instead(
+    #[case] utterance: &str,
+    #[case] expected: Vec<Token>,
+) {
+    let config = Config {
+        letter_o_substitution: false,
+        ..Default::default()
+    };
+    assert_eq!(tokenise(utterance, &config), expected);
+}
+
+/// Letter-O substitution does not interfere with month names, because
+/// sub_split_on_boundary has already split digit runs from alpha runs before
+/// classify() is called.  "7october" splits into "7" (numeric) and "october"
+/// (month name); the "october" token contains non-O alphabetic characters so
+/// the O-only gate never fires for it.
+#[rstest]
+#[case(
+    "7october",
+    vec![Token::Numeric(7, 1), Token::MonthName(MonthName::October)]
+)]
+#[case(
+    "november",
+    vec![Token::MonthName(MonthName::November)]
+)]
+#[case(
+    "oct",
+    vec![Token::MonthName(MonthName::October)]
+)]
+fn letter_o_substitution_does_not_affect_month_names(
+    #[case] utterance: &str,
+    #[case] expected: Vec<Token>,
+) {
+    assert_eq!(tokenise(utterance, &Config::default()), expected);
+}
+
+/// A full date string containing OCR-style letter-O in the year component is
+/// correctly tokenised when substitution is enabled.
+#[test]
+fn letter_o_substitution_in_full_date_year() {
+    assert_eq!(
+        tokenise("19 October 2O14", &Config::default()),
+        vec![
+            Token::Numeric(19, 2),
+            Token::MonthName(MonthName::October),
+            Token::Numeric(2014, 4),
+        ]
+    );
+}
+
+// -------------------------------------------------------------------------
 // Specific utterances from the test suite
 // -------------------------------------------------------------------------
 

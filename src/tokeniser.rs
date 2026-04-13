@@ -1,6 +1,7 @@
 //! Tokenisation: splitting and classifying utterance chunks into date tokens.
 
 use crate::models::{Config, DateComponent, MonthName, Token};
+use crate::word_numbers::replace_word_numbers;
 
 /// Split `utterance` on any standard separator or extra separator and classify
 /// each resulting chunk as a [`Token`].
@@ -26,6 +27,14 @@ use crate::models::{Config, DateComponent, MonthName, Token};
 ///   prefix, or fuzzy misspelling.
 /// - [`Token::Numeric`] — a run of ASCII digits; stores `(value, digit_count)`.
 /// - Anything else (noise words, stray punctuation) is silently discarded.
+///
+/// When [`Config::letter_o_substitution`] is `true` (the default), any token
+/// whose characters are all ASCII digits or the letter `O` (upper or lower
+/// case) is treated as a numeric token with every `O`/`o` replaced by `0`.
+/// This handles OCR and typing errors such as `"2O24"` → `2024`.  The
+/// substitution applies only to isolated tokens; a letter O that is part of a
+/// longer alphabetic run (e.g. `"october"`) is never affected because
+/// `sub_split_on_boundary` has already separated digit and alpha runs.
 ///
 /// At most **three** tokens are returned.
 ///
@@ -60,8 +69,32 @@ use crate::models::{Config, DateComponent, MonthName, Token};
 ///         Token::MonthName(MonthName::October),
 ///     ]
 /// );
+///
+/// // Letter O substitution (enabled by default):
+/// assert_eq!(
+///     tokenise("2O24", &Config::default()),
+///     vec![Token::Numeric(2024, 4)]
+/// );
+///
+/// // "7october" — the O is part of "october", not a standalone token, so
+/// // substitution does not apply and the month name is recognised normally.
+/// assert_eq!(
+///     tokenise("7october", &Config::default()),
+///     vec![
+///         Token::Numeric(7, 1),
+///         Token::MonthName(MonthName::October),
+///     ]
+/// );
 /// ```
 pub fn tokenise(utterance: &str, config: &Config) -> Vec<Token> {
+    // Replace any word-number spans (e.g. "twenty-three") with their digit
+    // equivalents before any further processing.  This is done unconditionally
+    // so that "nineteen eighty-four" becomes "1984" and is then classified as a
+    // normal Numeric token.  The replacement is non-destructive for utterances
+    // that contain no word numbers.
+    let normalised = replace_word_numbers(utterance);
+    let utterance = normalised.as_str();
+
     // No-separator path: pure-digit string of length 6 (DDMMYY) or 8 (DDMMYYYY).
     if config.no_separator
         && let Some(tokens) = try_tokenise_no_separator(utterance, &config.component_order)
@@ -104,6 +137,35 @@ pub fn tokenise(utterance: &str, config: &Config) -> Vec<Token> {
             continue;
         }
 
+        // Letter-O substitution at the chunk level: when the entire chunk
+        // consists solely of ASCII digits and the letter O (upper or lower
+        // case), replace every O/o with '0' before boundary splitting.
+        //
+        // This is intentionally a whole-chunk check: "2O24" → "2024" (all
+        // chars are digit-or-O), but "7october" is left untouched because
+        // "october" contains characters other than O, so the chunk as a whole
+        // does not satisfy the all-digit-or-O predicate.
+        //
+        // Performing the substitution here, before sub_split_on_boundary, is
+        // essential: if we waited until after splitting, "2O24" would be
+        // fragmented into ["2", "O", "24"] at the digit↔alpha boundaries,
+        // producing three separate tokens instead of the single Numeric(2024).
+        let substituted_chunk: String;
+        let effective_chunk = if config.letter_o_substitution
+            && chunk
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == 'o' || c == 'O')
+            && chunk.chars().any(|c| c == 'o' || c == 'O')
+        {
+            substituted_chunk = chunk
+                .chars()
+                .map(|c| if c == 'o' || c == 'O' { '0' } else { c })
+                .collect();
+            substituted_chunk.as_str()
+        } else {
+            chunk
+        };
+
         // A chunk may contain a digit-to-alpha or alpha-to-digit boundary with
         // no separator — e.g. "19october" or "August7". sub_split_on_boundary
         // splits at those transitions so each run can be classified on its own.
@@ -113,7 +175,7 @@ pub fn tokenise(utterance: &str, config: &Config) -> Vec<Token> {
         // Note: ordinal suffixes ("19th", "3rd") are intentionally NOT split —
         // the boundary detector leaves them intact so classify() can recognise
         // the whole thing as Token::OrdinalDay.
-        for sub in sub_split_on_boundary(chunk) {
+        for sub in sub_split_on_boundary(effective_chunk) {
             // Stop as soon as we have day, month, and year — there is nothing
             // useful left to collect. `break 'outer` exits both loops at once;
             // a plain `break` would only exit this inner loop and the outer

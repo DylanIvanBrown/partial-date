@@ -337,24 +337,53 @@ pub struct YearConfig {
     pub default: Option<i32>,
     /// Strategy for expanding two-digit years. Default: [`TwoDigitYearExpansion::SlidingWindow`].
     pub two_digit_expansion: TwoDigitYearExpansion,
+    /// When `true`, a single-digit token (`1`–`9`) is treated as a two-digit
+    /// year by prepending a zero — `5` becomes `05` — and then expanded
+    /// according to [`YearConfig::two_digit_expansion`].
+    ///
+    /// This option only applies when the other date components (day and month)
+    /// have already been filled by unambiguous tokens, so the interpreter can
+    /// confirm that the single digit is genuinely intended as a year.
+    ///
+    /// Default: `false`.  Enable when processing inputs like `"1 January 5"`
+    /// where `5` means year AD 5 (literal) or year 2005 (sliding window).
+    pub single_digit_year_expansion: bool,
 }
 
 impl YearConfig {
     /// Return the expanded year value when `value` (with `digit_count` original
     /// digits) is a plausible year for this config, or `None` when it is not.
     ///
-    /// Only 2-digit and 4-digit numbers are considered:
     /// - 4-digit values are used as-is.
+    /// - 3-digit values (100–999) are treated as literal years.
     /// - 2-digit values are expanded according to [`TwoDigitYearExpansion`].
+    /// - 1-digit values are accepted only when
+    ///   [`YearConfig::single_digit_year_expansion`] is `true`, in which case
+    ///   `value` is treated as `0value` (e.g. `5` → `05`) and then expanded
+    ///   using the same two-digit expansion strategy.
     /// - All other digit counts return `None`.
     ///
     /// The expanded value must also fall within the configured `min`/`max`
     /// bounds.
     pub fn try_as_year_candidate(&self, value: i16, digit_count: u8) -> Option<i32> {
-        let expanded = match digit_count {
-            4 => value as i32,
+        // Normalise single-digit values to their two-digit equivalent when the
+        // option is enabled, then fall through to the two-digit expansion path.
+        let (effective_value, effective_digit_count) =
+            if digit_count == 1 && self.single_digit_year_expansion {
+                // Prepend a zero: "5" → "05".  The digit count is now 2.
+                (value, 2u8)
+            } else {
+                (value, digit_count)
+            };
+
+        let expanded = match effective_digit_count {
+            4 => effective_value as i32,
+            // 3-digit values (100–999) are treated as literal years: year 100,
+            // year 999, etc.  This covers word-number inputs like "nine hundred
+            // ninety-nine" which replace to the 3-digit numeral 999.
+            3 => effective_value as i32,
             2 => {
-                let raw = value as i32;
+                let raw = effective_value as i32;
                 match &self.two_digit_expansion {
                     TwoDigitYearExpansion::Literal => raw,
                     TwoDigitYearExpansion::Always2000s => 2000 + raw,
@@ -386,6 +415,7 @@ impl Default for YearConfig {
             expected: IsExpected::Maybe,
             default: None,
             two_digit_expansion: TwoDigitYearExpansion::default(),
+            single_digit_year_expansion: false,
         }
     }
 }
@@ -479,7 +509,7 @@ impl Default for ComponentOrder {
 ///
 /// Construct via [`Config::default()`] and override only the fields you need,
 /// or build a fully custom config by setting each field explicitly.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Config {
     /// Configuration for day extraction.
     pub day: DayConfig,
@@ -496,6 +526,32 @@ pub struct Config {
     /// Additional custom separator strings to try alongside the standard set.
     /// Default: empty. Example: `vec!["||".to_string(), " - ".to_string()]`.
     pub extra_separators: Vec<String>,
+    /// When `true`, the tokeniser substitutes the letter `O` (upper or lower
+    /// case) for the digit `0` inside tokens that consist entirely of digits
+    /// and the letter O — for example `"2O24"` is treated as `"2024"`.
+    ///
+    /// This handles OCR and keyboard-entry errors where the letter O is typed
+    /// in place of zero. The substitution is applied only to tokens that would
+    /// otherwise be entirely numeric-with-O; it is never applied when the O
+    /// appears as part of a longer alphabetic run (e.g. `"7october"` — the
+    /// `"october"` portion is left as-is and classified as a month name).
+    ///
+    /// Default: `true`.
+    pub letter_o_substitution: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            day: DayConfig::default(),
+            month: MonthConfig::default(),
+            year: YearConfig::default(),
+            component_order: ComponentOrder::default(),
+            no_separator: false,
+            extra_separators: Vec::new(),
+            letter_o_substitution: true,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

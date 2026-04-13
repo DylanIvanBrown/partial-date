@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+# Enable non-English phonetic word-number tests (known limitation — see
+# word_numbers_non_english module).  Not enabled by default.
+non_english_word_numbers = []
+
 [dev-dependencies]
 partial-date = { path = ".." }
 rstest = "0.25"

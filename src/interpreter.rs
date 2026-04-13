@@ -375,22 +375,44 @@ fn generate_viable_assignments(
 
 /// Choose the best assignment from a non-empty list of viable candidates.
 ///
-/// Scoring priority (all maximised, sort descending):
+/// Scoring priority (all maximised unless noted, applied in order):
 ///
 /// 1. **Component count** — more filled slots is better.
 ///
-/// 2. **Unambiguity score** — count how many tokens in this assignment are
+/// 2. **Positional validity score** — count how many assigned tokens are valid
+///    for their prescribed slot according to `component_order`.  A token at
+///    position 0 (prescribed = Day in DMY) that is invalid as a day (e.g.
+///    value 25 in MDY where position 0 = Month) scores 0 for that token.
+///    Prefer assignments that do not "borrow" a token from its prescribed slot
+///    to fill a different one, displacing correctly-positioned tokens.
+///
+/// 3. **Unambiguity score** — count how many tokens in this assignment are
 ///    placed in the *only* slot they can validly fill across all open slots.
 ///    A token that could be Day or Month is ambiguous; a token that can only be
 ///    Day (value > 12) or only be Year (4-digit) is unambiguous. Unambiguous
 ///    placements must be respected before the configured order is consulted.
 ///
-/// 3. **Agreement score** — for the ambiguous tokens, count how many are placed
+/// 3. **Token exclusivity score** — for each assigned token, count how many of
+///    the open slots it can validly fill. Sum those counts across all assigned
+///    tokens; *lower is better* (a token valid for only 1 slot is more
+///    exclusive than one valid for 3). This is sorted ascending.
+///
+///    This handles cases like `"2024 2023 45"` with DMY: both 2024 and 2023
+///    are valid only for Year (exclusivity = 1 each), while 45 is valid for
+///    Year only via two-digit expansion (also 1). Among assignments that each
+///    fill just the Year slot, the one using 2024 or 2023 (4-digit, inherently
+///    unambiguous) beats the one using 45 (2-digit, could in principle have
+///    been a day). When two tokens tie on exclusivity, the earlier one in the
+///    input wins via the tiebreaker below.
+///
+/// 4. **Agreement score** — for the ambiguous tokens, count how many are placed
 ///    in the slot that `component_order` prescribes for their input position.
 ///    This is the primary mechanism for resolving genuinely ambiguous inputs.
 ///
-/// 4. **Deterministic tiebreaker** — positional agreement with `component_order`
-///    applied as a stable final sort key.
+/// 5. **Earliest-token tiebreaker** — when all scores tie, prefer the
+///    assignment whose assigned token(s) appear earliest in the input stream.
+///    This gives `"2024 2023 45"` → year=2024 rather than 2023 when both are
+///    equally exclusive 4-digit years.
 fn pick_best_assignment(
     mut viable: Vec<Assignment>,
     numerics: &[(i16, u8)],
@@ -402,10 +424,70 @@ fn pick_best_assignment(
         config.component_order.third,
     ];
 
-    let mut scored: Vec<(usize, usize, usize, Assignment)> = viable
+    // Helper: count how many open slots a given token (value, digit_count) can
+    // validly fill. Used for the token exclusivity score.
+    let slot_validity_count = |(value, digit_count): (i16, u8)| -> usize {
+        let can_be_day = config
+            .day
+            .try_as_day_candidate(value, digit_count)
+            .is_some();
+        let can_be_month = config
+            .month
+            .try_as_month_candidate(value, digit_count)
+            .is_some();
+        let can_be_year = config
+            .year
+            .try_as_year_candidate(value, digit_count)
+            .is_some();
+        can_be_day as usize + can_be_month as usize + can_be_year as usize
+    };
+
+    // Helper: whether token at position `token_index` is valid for its
+    // prescribed component in the configured order.
+    let token_valid_for_prescribed = |token_index: usize| -> bool {
+        let (value, digit_count) = match numerics.get(token_index) {
+            Some(&t) => t,
+            None => return false,
+        };
+        let prescribed = match order.get(token_index) {
+            Some(&c) => c,
+            None => return true, // no prescription for extra tokens — not penalised
+        };
+        match prescribed {
+            DateComponent::Day => config
+                .day
+                .try_as_day_candidate(value, digit_count)
+                .is_some(),
+            DateComponent::Month => config
+                .month
+                .try_as_month_candidate(value, digit_count)
+                .is_some(),
+            DateComponent::Year => config
+                .year
+                .try_as_year_candidate(value, digit_count)
+                .is_some(),
+        }
+    };
+
+    // scored tuple: (component_count, positional_validity, unambiguity,
+    //               exclusivity_sum, agreement, assignment)
+    // exclusivity_sum is sorted ascending (lower = more exclusive tokens used).
+    let mut scored: Vec<(usize, usize, usize, usize, usize, Assignment)> = viable
         .drain(..)
         .map(|assignment| {
             let component_count = assignment.component_count();
+
+            // Positional validity score: count how many assigned tokens are
+            // valid for their prescribed component (or have no prescription).
+            let positional_validity_score: usize = [
+                assignment.day_index,
+                assignment.month_index,
+                assignment.year_index,
+            ]
+            .iter()
+            .filter_map(|&index| index)
+            .filter(|&token_index| token_valid_for_prescribed(token_index))
+            .count();
 
             // Unambiguity score: count slots that are filled by the *only*
             // token that can validly occupy them.
@@ -465,6 +547,19 @@ fn pick_best_assignment(
             })
             .count();
 
+            // Token exclusivity score: sum of how many open slots each assigned
+            // token can validly fill. Lower is better — a token valid for only
+            // 1 slot is more constrained than one valid for 3.
+            let exclusivity_sum: usize = [
+                assignment.day_index,
+                assignment.month_index,
+                assignment.year_index,
+            ]
+            .iter()
+            .filter_map(|&index| index)
+            .map(|token_index| slot_validity_count(numerics[token_index]))
+            .sum();
+
             // Agreement score: count how many tokens at input position `i` are
             // assigned to `order[i]`. Resolves ambiguity for tokens that could
             // validly fill more than one slot.
@@ -482,7 +577,9 @@ fn pick_best_assignment(
 
             (
                 component_count,
+                positional_validity_score,
                 unambiguity_score,
+                exclusivity_sum,
                 agreement_score,
                 assignment,
             )
@@ -491,37 +588,32 @@ fn pick_best_assignment(
 
     scored.sort_by(|a, b| {
         b.0.cmp(&a.0) // more components first
-            .then(b.1.cmp(&a.1)) // more unambiguous placements first
-            .then(b.2.cmp(&a.2)) // higher agreement with config order first
+            .then(b.1.cmp(&a.1)) // more positionally-valid tokens first
+            .then(b.2.cmp(&a.2)) // more unambiguous placements first
+            .then(a.3.cmp(&b.3)) // lower exclusivity sum first (more exclusive tokens)
+            .then(b.4.cmp(&a.4)) // higher agreement with config order first
             .then_with(|| {
-                // Deterministic tiebreaker: compare raw positional agreement.
-                let a_score = positional_order_score(&a.3, numerics, &order);
-                let b_score = positional_order_score(&b.3, numerics, &order);
-                b_score.cmp(&a_score)
+                // Earliest-token tiebreaker: prefer the assignment whose tokens
+                // appear earliest in the input stream. This is equivalent to
+                // preferring the smallest sum of assigned token indices.
+                let earliest_token_index = |assignment: &Assignment| -> usize {
+                    [
+                        assignment.day_index,
+                        assignment.month_index,
+                        assignment.year_index,
+                    ]
+                    .iter()
+                    .filter_map(|&i| i)
+                    .sum()
+                };
+                let a_earliest = earliest_token_index(&a.5);
+                let b_earliest = earliest_token_index(&b.5);
+                a_earliest.cmp(&b_earliest) // smaller index sum = earlier in input
             })
     });
 
-    scored.remove(0).3
-}
-
-/// Count how many tokens at their original input positions are assigned to the
-/// component that `order[position]` prescribes.
-fn positional_order_score(
-    assignment: &Assignment,
-    numerics: &[(i16, u8)],
-    order: &[DateComponent; 3],
-) -> usize {
-    numerics
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| {
-            let prescribed = match order.get(*index) {
-                Some(c) => *c,
-                None => return false,
-            };
-            assignment.component_for_token(*index) == Some(prescribed)
-        })
-        .count()
+    let best = scored.remove(0);
+    best.5
 }
 
 // ---------------------------------------------------------------------------
