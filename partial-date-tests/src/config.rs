@@ -33,7 +33,7 @@ fn default_config_has_sensible_defaults() {
     assert!(config.year.default.is_none());
     assert_eq!(
         config.year.two_digit_expansion,
-        TwoDigitYearExpansion::SlidingWindow(WindowRange::default())
+        TwoDigitYearExpansion::default()
     );
 
     // Component order and separator
@@ -76,10 +76,7 @@ fn default_year_config() {
     assert_eq!(year.max, 3000);
     assert_eq!(year.expected, IsExpected::Maybe);
     assert!(year.default.is_none());
-    assert_eq!(
-        year.two_digit_expansion,
-        TwoDigitYearExpansion::SlidingWindow(WindowRange::default())
-    );
+    assert_eq!(year.two_digit_expansion, TwoDigitYearExpansion::default());
 }
 
 // -------------------------------------------------------------------------
@@ -437,14 +434,17 @@ fn config_default_year_expansion_is_sliding_window() {
     let config = Config::default();
     assert_eq!(
         config.year.two_digit_expansion,
-        TwoDigitYearExpansion::SlidingWindow(WindowRange::default())
+        TwoDigitYearExpansion::default()
     );
 }
 
 /// All three expansion modes should be settable.
 #[rstest]
-#[case(TwoDigitYearExpansion::SlidingWindow(WindowRange::default()))]
-#[case(TwoDigitYearExpansion::Always2000s)]
+#[case(TwoDigitYearExpansion::SlidingWindow {
+    earliest_year: 1950,
+    pivot: SlidingWindowPivot::new(50).unwrap(),
+})]
+#[case(TwoDigitYearExpansion::Always(Century::new(2000).unwrap()))]
 #[case(TwoDigitYearExpansion::Literal)]
 fn config_year_expansion_mode_settable(#[case] expansion: TwoDigitYearExpansion) {
     let config = YearConfig {
@@ -455,119 +455,95 @@ fn config_year_expansion_mode_settable(#[case] expansion: TwoDigitYearExpansion)
 }
 
 // -------------------------------------------------------------------------
-// WindowRange validation
+// SlidingWindowPivot validation
 // -------------------------------------------------------------------------
 
-/// Default WindowRange should have the standard 00–49 → 2000–2049, 50–99 → 1950–1999 mapping.
+/// SlidingWindowPivot::new should accept values in the range 1–99.
+#[rstest]
+#[case(1)]
+#[case(50)]
+#[case(70)]
+#[case(99)]
+fn sliding_window_pivot_valid(#[case] pivot: u8) {
+    assert!(SlidingWindowPivot::new(pivot).is_ok());
+}
+
+/// SlidingWindowPivot::new should reject 0 and values >= 100.
+#[rstest]
+#[case(0)]
+#[case(100)]
+#[case(255)]
+fn sliding_window_pivot_invalid(#[case] pivot: u8) {
+    let result = SlidingWindowPivot::new(pivot);
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        SlidingWindowPivotError::InvalidPivot(_)
+    ));
+}
+
+/// TryFrom<u8> for SlidingWindowPivot mirrors new().
 #[test]
-fn window_range_default_values() {
-    let wr = WindowRange::default();
-    assert_eq!(
-        wr.lower_range,
-        Range {
-            min: 2000,
-            max: 2050
-        }
-    );
-    assert_eq!(
-        wr.upper_range,
-        Range {
-            min: 1950,
-            max: 2000
-        }
-    );
+fn sliding_window_pivot_try_from_u8() {
+    let pivot: Result<SlidingWindowPivot, _> = 50_u8.try_into();
+    assert!(pivot.is_ok());
+    let invalid: Result<SlidingWindowPivot, _> = 0_u8.try_into();
+    assert!(invalid.is_err());
 }
 
-/// WindowRange::new should accept valid, contiguous, non-overlapping ranges that span 100 years.
-#[rstest]
-#[case(
-    Range { min: 2000, max: 2050 },
-    Range { min: 1950, max: 2000 },
-)]
-#[case(
-    Range { min: 2000, max: 2070 },
-    Range { min: 1970, max: 2000 },
-)]
-#[case(
-    Range { min: 1900, max: 1950 },
-    Range { min: 1950, max: 2000 },
-)]
-fn window_range_new_valid(#[case] lower: Range, #[case] upper: Range) {
-    let result = WindowRange::new(lower, upper);
-    assert!(result.is_ok());
-    let wr = result.unwrap();
-    assert_eq!(wr.lower_range, lower);
-    assert_eq!(wr.upper_range, upper);
+/// From<SlidingWindowPivot> for u8 round-trips the value.
+#[test]
+fn sliding_window_pivot_into_u8() {
+    let pivot = SlidingWindowPivot::new(50).unwrap();
+    let value: u8 = pivot.into();
+    assert_eq!(value, 50);
 }
 
-/// WindowRange::new should reject empty ranges (min >= max).
+// -------------------------------------------------------------------------
+// Century validation
+// -------------------------------------------------------------------------
+
+/// Century::new should accept values divisible by 100.
 #[rstest]
-#[case(
-    Range { min: 2050, max: 2050 },
-    Range { min: 1950, max: 2000 },
-)]
-#[case(
-    Range { min: 2050, max: 2000 },
-    Range { min: 1950, max: 2000 },
-)]
-#[case(
-    Range { min: 2000, max: 2050 },
-    Range { min: 2000, max: 2000 },
-)]
-fn window_range_new_empty_range(#[case] lower: Range, #[case] upper: Range) {
-    let result = WindowRange::new(lower, upper);
+#[case(0)]
+#[case(100)]
+#[case(1800)]
+#[case(2000)]
+#[case(2100)]
+fn century_new_valid(#[case] year: i32) {
+    assert!(Century::new(year).is_ok());
+}
+
+/// Century::new should reject values not divisible by 100.
+#[rstest]
+#[case(1)]
+#[case(1756)]
+#[case(1801)]
+#[case(2025)]
+fn century_new_invalid(#[case] year: i32) {
+    let result = Century::new(year);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
-        WindowRangeError::EmptyRange { .. }
+        CenturyError::NotACenturyBoundary(_)
     ));
 }
 
-/// WindowRange::new should reject overlapping ranges.
-#[rstest]
-#[case(
-    Range { min: 1990, max: 2050 },
-    Range { min: 2040, max: 2100 },
-)]
-#[case(
-    Range { min: 2000, max: 2060 },
-    Range { min: 2050, max: 2100 },
-)]
-fn window_range_new_overlapping(#[case] lower: Range, #[case] upper: Range) {
-    let result = WindowRange::new(lower, upper);
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WindowRangeError::Overlapping));
+/// TryFrom<i32> for Century mirrors new().
+#[test]
+fn century_try_from_i32() {
+    let century: Result<Century, _> = 1800_i32.try_into();
+    assert!(century.is_ok());
+    let invalid: Result<Century, _> = 1756_i32.try_into();
+    assert!(invalid.is_err());
 }
 
-/// WindowRange::new should reject ranges that don't span exactly 100 years.
-#[rstest]
-#[case(
-    Range { min: 2000, max: 2050 },
-    Range { min: 1950, max: 1999 },
-)]
-#[case(
-    Range { min: 2001, max: 2060 },
-    Range { min: 1960, max: 2000 },
-)]
-fn window_range_new_invalid_total_span(#[case] lower: Range, #[case] upper: Range) {
-    let result = WindowRange::new(lower, upper);
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        WindowRangeError::InvalidTotalSpan { .. }
-    ));
-}
-
-/// WindowRange::new should reject ranges with a gap between them.
-#[rstest]
-#[case(
-    Range { min: 2000, max: 2050 },
-    Range { min: 1900, max: 1950 },
-)]
-fn window_range_new_gap(#[case] lower: Range, #[case] upper: Range) {
-    let result = WindowRange::new(lower, upper);
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WindowRangeError::Gap));
+/// From<Century> for i32 round-trips the value.
+#[test]
+fn century_into_i32() {
+    let century = Century::new(1800).unwrap();
+    let value: i32 = century.into();
+    assert_eq!(value, 1800);
 }
 
 // -------------------------------------------------------------------------
@@ -787,29 +763,101 @@ fn config_single_digit_year_expansion_with_full_date_context() {
     assert_eq!(result.year.value, Extracted::Found(2005));
 }
 
-/// A custom WindowRange can be used in TwoDigitYearExpansion.
+/// A custom SlidingWindow with a non-default pivot can be stored in YearConfig.
 #[test]
-fn config_custom_window_range() {
-    let wr = WindowRange::new(
-        Range {
-            min: 2000,
-            max: 2070,
-        },
-        Range {
-            min: 1970,
-            max: 2000,
-        },
-    )
-    .unwrap();
+fn config_custom_sliding_window() {
+    let pivot = SlidingWindowPivot::new(70).unwrap();
+    let expansion = TwoDigitYearExpansion::SlidingWindow {
+        earliest_year: 1970,
+        pivot,
+    };
     let config = Config {
         year: YearConfig {
-            two_digit_expansion: TwoDigitYearExpansion::SlidingWindow(wr),
+            two_digit_expansion: expansion,
             ..Default::default()
         },
         ..Default::default()
     };
-    assert_eq!(
-        config.year.two_digit_expansion,
-        TwoDigitYearExpansion::SlidingWindow(wr)
-    );
+    assert_eq!(config.year.two_digit_expansion, expansion);
+}
+
+// -------------------------------------------------------------------------
+// Config with TwoDigitYearExpansion::Always(Century)
+// -------------------------------------------------------------------------
+
+/// Always(Century) maps all two-digit values into the given century.
+/// 00 → century, 99 → century + 99.
+#[rstest]
+#[case(Century::new(2000).unwrap(), "00", 2000)]
+#[case(Century::new(2000).unwrap(), "34", 2034)]
+#[case(Century::new(2000).unwrap(), "99", 2099)]
+#[case(Century::new(1800).unwrap(), "00", 1800)]
+#[case(Century::new(1800).unwrap(), "34", 1834)]
+#[case(Century::new(1800).unwrap(), "99", 1899)]
+fn config_always_century_expansion(
+    #[case] century: Century,
+    #[case] utterance: &str,
+    #[case] expected_year: i32,
+) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            two_digit_expansion: TwoDigitYearExpansion::Always(century),
+            min: 0,
+            max: 3000,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Always(Century) with a YearConfig::min/max that excludes part of the
+/// century: values that expand outside the range should return NotFound.
+#[rstest]
+#[case(Century::new(1800).unwrap(), "00", 1800, 1850)] // 00 → 1800, inside range
+#[case(Century::new(1800).unwrap(), "50", 1800, 1850)] // 50 → 1850, at boundary (inclusive)
+#[case(Century::new(1800).unwrap(), "51", 1800, 1850)] // 51 → 1851, outside range
+#[case(Century::new(1800).unwrap(), "99", 1800, 1850)] // 99 → 1899, outside range
+fn config_always_century_expansion_clamped_by_min_max(
+    #[case] century: Century,
+    #[case] utterance: &str,
+    #[case] year_min: i32,
+    #[case] year_max: i32,
+) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            two_digit_expansion: TwoDigitYearExpansion::Always(century),
+            min: year_min,
+            max: year_max,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    // "51" and "99" should be NotFound; "00" and "50" should be Found.
+    let expanded = i32::from(century) + utterance.parse::<i32>().unwrap();
+    if expanded >= year_min && expanded <= year_max {
+        assert_eq!(result.year.value, Extracted::Found(expanded));
+    } else {
+        assert!(result.year.value.is_not_found());
+    }
 }

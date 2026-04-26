@@ -37,7 +37,7 @@ cargo run --example example_03_basic_ymd
 
 ### Year Expansion Modes (10-12)
 - **Example 10**: Sliding window (default) - `00-49→2000-2049, 50-99→1950-1999`
-- **Example 11**: Always2000s - All 2-digit years become `2000-2099`
+- **Example 11**: Always(Century(2000)) - All 2-digit years become `2000-2099`
 - **Example 12**: Literal - 2-digit years kept as-is (e.g., `24` → `24`)
 
 ### Ordinal Days (13-15)
@@ -85,7 +85,7 @@ cargo run --example example_03_basic_ymd
 
 ### Year Expansion
 - **Sliding Window**: Smart date interpretation (2024 vs 1999)
-- **Always2000s**: All 2-digit years map to 2000-2099
+- **Always(Century)**: All 2-digit years map to the given century (e.g. `Always(Century(2000))` → 2000-2099)
 - **Literal**: 2-digit years preserved as-is
 
 ## Configuration Reference

@@ -191,137 +191,192 @@ impl Default for MonthConfig {
     }
 }
 
+/// The pivot point for a [`TwoDigitYearExpansion::SlidingWindow`].
+///
+/// A valid pivot is in the range `1–99`. A pivot of `p` means two-digit
+/// values `0..(p-1)` map to the upper (more recent) part of the window, and
+/// values `p..99` map to the lower (earlier) part.
+///
+/// # Construction
+///
+/// Use [`SlidingWindowPivot::new`] or [`TryFrom<u8>`]:
+///
+/// ```
+/// use partial_date::models::SlidingWindowPivot;
+///
+/// let pivot = SlidingWindowPivot::new(50).unwrap();
+/// let pivot: SlidingWindowPivot = 50_u8.try_into().unwrap();
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlidingWindowPivot(u8);
+
+impl SlidingWindowPivot {
+    /// Create a new `SlidingWindowPivot`, returning `Err` if `pivot` is `0` or
+    /// greater than `99`.
+    pub fn new(pivot: u8) -> Result<Self, SlidingWindowPivotError> {
+        if pivot == 0 || pivot > 99 {
+            return Err(SlidingWindowPivotError::InvalidPivot(pivot));
+        }
+        Ok(SlidingWindowPivot(pivot))
+    }
+}
+
+impl TryFrom<u8> for SlidingWindowPivot {
+    type Error = SlidingWindowPivotError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        SlidingWindowPivot::new(value)
+    }
+}
+
+impl From<SlidingWindowPivot> for u8 {
+    fn from(pivot: SlidingWindowPivot) -> u8 {
+        pivot.0
+    }
+}
+
+/// Errors returned by [`SlidingWindowPivot::new`] when validation fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SlidingWindowPivotError {
+    /// The pivot value must be in the range `1–99`.
+    InvalidPivot(u8),
+}
+
+/// A year that falls exactly on a century boundary (divisible by 100).
+///
+/// Used with [`TwoDigitYearExpansion::Always`] to express that all two-digit
+/// values should map into a specific century. For example, `Century::new(1800)`
+/// means `00 → 1800`, `34 → 1834`, `99 → 1899`.
+///
+/// # Construction
+///
+/// Use [`Century::new`] or [`TryFrom<i32>`]:
+///
+/// ```
+/// use partial_date::models::Century;
+///
+/// let century = Century::new(1800).unwrap();
+/// let century: Century = 2000_i32.try_into().unwrap();
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Century(i32);
+
+impl Century {
+    /// Create a new `Century`, returning `Err` if `year` is not divisible by
+    /// `100`.
+    pub fn new(year: i32) -> Result<Self, CenturyError> {
+        if year % 100 != 0 {
+            return Err(CenturyError::NotACenturyBoundary(year));
+        }
+        Ok(Century(year))
+    }
+}
+
+impl TryFrom<i32> for Century {
+    type Error = CenturyError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Century::new(value)
+    }
+}
+
+impl From<Century> for i32 {
+    fn from(century: Century) -> i32 {
+        century.0
+    }
+}
+
+/// Errors returned by [`Century::new`] when validation fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CenturyError {
+    /// The year value must be divisible by `100` (e.g. `1800`, `2000`).
+    NotACenturyBoundary(i32),
+}
+
 /// Strategy for expanding two-digit years into four-digit years.
+///
+/// # Choosing a strategy
+///
+/// - Use [`SlidingWindow`] when two-digit years could span two adjacent
+///   centuries and you want to bias towards a particular era.
+/// - Use [`Always`] when all two-digit years belong to the same century
+///   without ambiguity (e.g. children's birthdays are all in the 2000s).
+/// - Use [`Literal`] when you want the two-digit value kept as-is (e.g.
+///   historical records where the year is genuinely in the range 0–99).
+///
+/// [`SlidingWindow`]: TwoDigitYearExpansion::SlidingWindow
+/// [`Always`]: TwoDigitYearExpansion::Always
+/// [`Literal`]: TwoDigitYearExpansion::Literal
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TwoDigitYearExpansion {
-    /// Sliding window: 00–49 → 2000–2049, 50–99 → 1950–1999.
-    /// This is the default.
-    SlidingWindow(WindowRange),
-    /// Always map to the 2000s: 00–99 → 2000–2099.
-    Always2000s,
-    /// Return the two-digit value literally (e.g. 24 stays as 24).
+    /// Splits the 100 possible two-digit values across two adjacent centuries.
+    ///
+    /// `earliest_year` is the smallest year the window can ever produce — it
+    /// is the year that two-digit value `pivot` maps to.  Values
+    /// `pivot..=99` map to `earliest_year..=(earliest_year + (99 - pivot))`,
+    /// and values `0..(pivot)` map to
+    /// `(earliest_year + (100 - pivot))..(earliest_year + 99)`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use partial_date::models::{SlidingWindowPivot, TwoDigitYearExpansion};
+    ///
+    /// // 00–49 → 2000–2049, 50–99 → 1950–1999 (the default).
+    /// let expansion = TwoDigitYearExpansion::SlidingWindow {
+    ///     earliest_year: 1950,
+    ///     pivot: SlidingWindowPivot::new(50).unwrap(),
+    /// };
+    ///
+    /// // Industrial Revolution era: 00–49 → 1800–1849, 50–99 → 1750–1799.
+    /// let expansion = TwoDigitYearExpansion::SlidingWindow {
+    ///     earliest_year: 1750,
+    ///     pivot: SlidingWindowPivot::new(50).unwrap(),
+    /// };
+    /// ```
+    SlidingWindow {
+        /// The smallest year this window can produce (the year `pivot` maps
+        /// to).  Must be chosen so that the full window
+        /// `[earliest_year, earliest_year + 99]` covers the values you
+        /// intend to accept.  Use [`YearConfig::min`] and [`YearConfig::max`]
+        /// to reject any expanded years that fall outside your valid range.
+        earliest_year: i32,
+        /// The two-digit value at which the window wraps from the lower
+        /// (earlier) century to the upper (more recent) century.
+        pivot: SlidingWindowPivot,
+    },
+    /// Maps all two-digit values into a single century.
+    ///
+    /// `00` maps to the century start, `99` maps to `century + 99`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use partial_date::models::{Century, TwoDigitYearExpansion};
+    ///
+    /// // All two-digit years are in the 2000s: 00 → 2000, 34 → 2034.
+    /// let expansion = TwoDigitYearExpansion::Always(Century::new(2000).unwrap());
+    ///
+    /// // All two-digit years are in the 1800s: 00 → 1800, 34 → 1834.
+    /// let expansion = TwoDigitYearExpansion::Always(Century::new(1800).unwrap());
+    /// ```
+    Always(Century),
+    /// Return the two-digit value literally (e.g. `24` stays as `24`).
+    ///
+    /// Useful when processing historical records where the year genuinely
+    /// falls in the range `0–99`, or when you want to apply your own
+    /// post-processing.
     Literal,
 }
 
 impl Default for TwoDigitYearExpansion {
+    /// The standard modern sliding window: `00–49 → 2000–2049`, `50–99 → 1950–1999`.
     fn default() -> Self {
-        TwoDigitYearExpansion::SlidingWindow(WindowRange::default())
-    }
-}
-
-/// Defines how two-digit years are mapped into two non-overlapping,
-/// contiguous century ranges.
-///
-/// For example, the default maps `00–49 → 2000–2049` and `50–99 → 1950–1999`.
-///
-/// # Validation
-///
-/// A valid `WindowRange` must satisfy:
-/// - Neither range is empty (`min < max`).
-/// - The two ranges do not overlap.
-/// - Together they cover a contiguous span of exactly 100 years (no gaps).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WindowRange {
-    /// The range that the *lower* two-digit values (e.g. 00–49) map into.
-    pub lower_range: Range,
-    /// The range that the *upper* two-digit values (e.g. 50–99) map into.
-    pub upper_range: Range,
-}
-
-impl WindowRange {
-    /// Create a new `WindowRange`, returning `Err` if the ranges are invalid.
-    ///
-    /// Validation rules:
-    /// - Both ranges must be non-empty (`min < max`).
-    /// - The ranges must not overlap.
-    /// - The ranges must be contiguous (no gap between them) and together
-    ///   span exactly 100 years.
-    pub fn new(lower_range: Range, upper_range: Range) -> Result<Self, WindowRangeError> {
-        // Each range must be non-empty.
-        if lower_range.min >= lower_range.max {
-            return Err(WindowRangeError::EmptyRange {
-                label: "lower_range",
-                min: lower_range.min,
-                max: lower_range.max,
-            });
-        }
-        if upper_range.min >= upper_range.max {
-            return Err(WindowRangeError::EmptyRange {
-                label: "upper_range",
-                min: upper_range.min,
-                max: upper_range.max,
-            });
-        }
-
-        // The two ranges must not overlap.
-        // Because Range is non-inclusive on max, overlap means one range's min
-        // is strictly less than the other's max AND vice-versa.
-        let overlaps = lower_range.min < upper_range.max && upper_range.min < lower_range.max;
-        if overlaps {
-            return Err(WindowRangeError::Overlapping);
-        }
-
-        // Together they must span exactly 100 years with no gap.
-        let lower_span = lower_range.max - lower_range.min;
-        let upper_span = upper_range.max - upper_range.min;
-        let total_span = lower_span + upper_span;
-        if total_span != 100 {
-            return Err(WindowRangeError::InvalidTotalSpan { total_span });
-        }
-
-        // Check contiguity: one range's max must equal the other's min.
-        let contiguous = lower_range.max == upper_range.min || upper_range.max == lower_range.min;
-        if !contiguous {
-            return Err(WindowRangeError::Gap);
-        }
-
-        Ok(WindowRange {
-            lower_range,
-            upper_range,
-        })
-    }
-}
-
-impl Default for WindowRange {
-    /// The standard sliding-window default: `00–49 → 2000–2049`, `50–99 → 1950–1999`.
-    fn default() -> Self {
-        WindowRange {
-            lower_range: Range {
-                min: 2000,
-                max: 2050,
-            },
-            upper_range: Range {
-                min: 1950,
-                max: 2000,
-            },
+        TwoDigitYearExpansion::SlidingWindow {
+            earliest_year: 1950,
+            pivot: SlidingWindowPivot(50),
         }
     }
-}
-
-/// Errors returned by [`WindowRange::new`] when validation fails.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WindowRangeError {
-    /// One of the ranges is empty (min >= max).
-    EmptyRange {
-        label: &'static str,
-        min: i32,
-        max: i32,
-    },
-    /// The two ranges overlap.
-    Overlapping,
-    /// The combined span of both ranges is not exactly 100 years.
-    InvalidTotalSpan { total_span: i32 },
-    /// There is a gap between the two ranges (they are not contiguous).
-    Gap,
-}
-
-/// A half-open range `[min, max)` representing a span of years.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Range {
-    /// Start of the range (inclusive).
-    pub min: i32,
-    /// End of the range (exclusive).
-    pub max: i32,
 }
 
 /// Configuration for year extraction.
@@ -386,13 +441,18 @@ impl YearConfig {
                 let raw = effective_value as i32;
                 match &self.two_digit_expansion {
                     TwoDigitYearExpansion::Literal => raw,
-                    TwoDigitYearExpansion::Always2000s => 2000 + raw,
-                    TwoDigitYearExpansion::SlidingWindow(window_range) => {
-                        let pivot = window_range.lower_range.max - window_range.lower_range.min;
+                    TwoDigitYearExpansion::Always(century) => i32::from(*century) + raw,
+                    TwoDigitYearExpansion::SlidingWindow {
+                        earliest_year,
+                        pivot,
+                    } => {
+                        let pivot = u8::from(*pivot) as i32;
                         if raw < pivot {
-                            window_range.lower_range.min + raw
+                            // Upper (more recent) half: 0..(pivot-1)
+                            earliest_year + (100 - pivot) + raw
                         } else {
-                            window_range.upper_range.min + (raw - pivot)
+                            // Lower (earlier) half: pivot..99
+                            earliest_year + (raw - pivot)
                         }
                     }
                 }

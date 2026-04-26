@@ -105,13 +105,14 @@ DayConfig {
 ### Handle 2-Digit Years
 ```rust
 YearConfig {
-    two_digit_expansion: TwoDigitYearExpansion::Always2000s,  // 99 → 2099
+    two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000).unwrap()),  // 99 → 2099
     // or
     two_digit_expansion: TwoDigitYearExpansion::Literal,      // 99 → 99
     // or (default)
-    two_digit_expansion: TwoDigitYearExpansion::SlidingWindow(
-        WindowRange::default()  // 99 → 1999, 24 → 2024
-    ),
+    two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
+        earliest_year: 1950,
+        pivot: SlidingWindowPivot::new(50).unwrap(),  // 99 → 1999, 24 → 2024
+    },
     ..Default::default()
 }
 ```
@@ -221,11 +222,12 @@ Output: 2024, 1999, 2000, 1950
 Best for: Recent historical data (1950s-2050s)
 ```
 
-### Always2000s
+### Always(Century)
 ```
+Always(Century::new(2000).unwrap())
 Input: 24, 99, 00, 50
 Output: 2024, 2099, 2000, 2050
-Best for: Systems with guaranteed 21st century dates
+Best for: Systems with guaranteed single-century dates (e.g. all 2000s)
 ```
 
 ### Literal

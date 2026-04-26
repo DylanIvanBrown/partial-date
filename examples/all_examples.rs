@@ -293,12 +293,12 @@ fn example_10_year_two_digit_sliding_window() {
 }
 
 // ============================================================================
-// EXAMPLE 11: Two-Digit Year - Always2000s
+// EXAMPLE 11: Two-Digit Year - Always(Century)
 // ============================================================================
 fn example_11_year_two_digit_always_2000s() {
-    println!("1️⃣1️⃣  TWO-DIGIT YEAR: Always2000s");
+    println!("1️⃣1️⃣  TWO-DIGIT YEAR: Always(Century(2000))");
     println!("   Input: '25/12/99'");
-    println!("   Config: Two-digit expansion = Always2000s (all become 2000-2099)\n");
+    println!("   Config: Two-digit expansion = Always(Century(2000)) (all become 2000-2099)\n");
 
     let input = Input {
         utterance: "25/12/99".to_string(),
@@ -310,7 +310,7 @@ fn example_11_year_two_digit_always_2000s() {
             },
             year: YearConfig {
                 expected: IsExpected::Yes,
-                two_digit_expansion: TwoDigitYearExpansion::Always2000s,
+                two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000).unwrap()),
                 ..Default::default()
             },
             ..Default::default()
@@ -659,9 +659,10 @@ fn example_22_all_component_orders() {
                 component_order: order,
                 year: YearConfig {
                     expected: IsExpected::Yes,
-                    two_digit_expansion: TwoDigitYearExpansion::SlidingWindow(
-                        WindowRange::default(),
-                    ),
+                    two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
+                        earliest_year: 1950,
+                        pivot: SlidingWindowPivot::new(50).unwrap(),
+                    },
                     ..Default::default()
                 },
                 ..Default::default()

@@ -6,7 +6,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use partial_date::models::{IsExpected, Range, WindowRange};
+use partial_date::models::{IsExpected, SlidingWindowPivot};
 
 fn main() {
     println!("Partial Date Extraction Examples");
@@ -34,7 +34,10 @@ fn main() {
             "3" => PreDefinedConfigs::IndustrialRevolutionDates,
             "4" => PreDefinedConfigs::ChildrenBirthdays,
             "quit" => break 'scenario,
-            _ => { println!("Unknown option.\n"); continue 'scenario; }
+            _ => {
+                println!("Unknown option.\n");
+                continue 'scenario;
+            }
         };
         loop {
             print!("Enter a date (or 'back' / 'quit'): ");
@@ -43,14 +46,12 @@ fn main() {
             stdin.lock().read_line(&mut input).unwrap();
             match input.trim() {
                 "quit" => break 'scenario,
-                "back" => break,          // back to scenario selection
+                "back" => break, // back to scenario selection
                 text => {
-                    let result = partial_date::extract::extract(
-                        partial_date::models::Input {
-                            utterance: text.to_string(),
-                            config: Some(config_preset.get_config()),
-                        }
-                    );
+                    let result = partial_date::extract::extract(partial_date::models::Input {
+                        utterance: text.to_string(),
+                        config: Some(config_preset.get_config()),
+                    });
                     println!("  Day:   {:?}", result.day.value);
                     println!("  Month: {:?}", result.month.number);
                     println!("  Year:  {:?}\n", result.year.value);
@@ -126,10 +127,11 @@ impl PreDefinedConfigs {
                     min: 1760,
                     max: 1840,
                     default: None,
-                    two_digit_expansion: partial_date::models::TwoDigitYearExpansion::SlidingWindow(WindowRange {
-                        lower_range:  Range{min: 1800, max: 1850},
-                        upper_range: Range{min: 1750, max: 1800},
-                    }),
+                    two_digit_expansion:
+                        partial_date::models::TwoDigitYearExpansion::SlidingWindow {
+                            earliest_year: 1750,
+                            pivot: SlidingWindowPivot::new(50).unwrap(),
+                        },
                     single_digit_year_expansion: false,
                     expected: partial_date::models::IsExpected::Yes,
                 },
@@ -151,7 +153,9 @@ impl PreDefinedConfigs {
                     max: 2026,
                     default: None,
                     single_digit_year_expansion: true,
-                    two_digit_expansion: partial_date::models::TwoDigitYearExpansion::Always2000s,
+                    two_digit_expansion: partial_date::models::TwoDigitYearExpansion::Always(
+                        partial_date::models::Century::new(2000).unwrap(),
+                    ),
                     expected: partial_date::models::IsExpected::Yes,
                 },
                 ..Default::default()

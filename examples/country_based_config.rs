@@ -29,7 +29,12 @@ fn main() {
         country: Country::Liberia,
     };
 
-    let all_users = vec![south_african_user_1, south_african_user_2, liberian_user, liberian_user_2];
+    let all_users = vec![
+        south_african_user_1,
+        south_african_user_2,
+        liberian_user,
+        liberian_user_2,
+    ];
 
     for user in all_users {
         // Matching country to config allows us to cleanly parse the different
@@ -43,7 +48,10 @@ fn main() {
 
         let result = partial_date::extract::extract(input);
 
-        println!("User: {} from {:?} input: '{}'", user.name, user.country, user.date_input);
+        println!(
+            "User: {} from {:?} input: '{}'",
+            user.name, user.country, user.date_input
+        );
         println!("  Parsed Day:   {:?}", result.day.value);
         println!("  Parsed Month: {:?}", result.month.number);
         println!("  Parsed Year:  {:?}\n", result.year.value);

@@ -82,7 +82,8 @@ fn year_two_digit_sliding_window(#[case] utterance: &str, #[case] expected_year:
 // Two-digit year expansion: custom sliding window (00–69 → 2000–2069, 70–99 → 1970–1999)
 // -------------------------------------------------------------------------
 
-/// A custom sliding window with a different pivot point should shift the mapping.
+/// A custom sliding window with a non-default pivot shifts the mapping.
+/// earliest_year: 1970, pivot: 70 → 00–69 map to 2000–2069, 70–99 map to 1970–1999.
 #[rstest]
 #[case("00", 2000)]
 #[case("24", 2024)]
@@ -91,21 +92,13 @@ fn year_two_digit_sliding_window(#[case] utterance: &str, #[case] expected_year:
 #[case("85", 1985)]
 #[case("99", 1999)]
 fn year_two_digit_custom_sliding_window(#[case] utterance: &str, #[case] expected_year: i32) {
-    let wr = WindowRange::new(
-        Range {
-            min: 2000,
-            max: 2070,
-        },
-        Range {
-            min: 1970,
-            max: 2000,
-        },
-    )
-    .unwrap();
     let config = Config {
         year: YearConfig {
             expected: IsExpected::Yes,
-            two_digit_expansion: TwoDigitYearExpansion::SlidingWindow(wr),
+            two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
+                earliest_year: 1970,
+                pivot: SlidingWindowPivot::new(70).unwrap(),
+            },
             ..Default::default()
         },
         day: DayConfig {
@@ -124,12 +117,92 @@ fn year_two_digit_custom_sliding_window(#[case] utterance: &str, #[case] expecte
     assert_eq!(result.year.value, Extracted::Found(expected_year));
 }
 
+/// Industrial Revolution era sliding window: earliest_year 1750, pivot 50.
+/// 00–49 → 1800–1849, 50–99 → 1750–1799. min: 1760, max: 1840 rejects out-of-era values.
+#[rstest]
+#[case("00", Some(1800))]
+#[case("34", Some(1834))]
+#[case("40", Some(1840))]
+#[case("41", None)] // 1841 > max 1840 → rejected
+#[case("49", None)] // 1849 > max 1840 → rejected
+#[case("50", None)] // 1750 < min 1760 → rejected
+#[case("59", None)] // 1759 < min 1760 → rejected
+#[case("60", Some(1760))] // 1750 + (60 - 50) = 1760 ✓
+#[case("88", Some(1788))] // 1750 + (88 - 50) = 1788 ✓
+#[case("99", Some(1799))] // 1750 + (99 - 50) = 1799, within min:1760 max:1840 ✓
+fn year_two_digit_industrial_revolution_window(
+    #[case] utterance: &str,
+    #[case] expected_year: Option<i32>,
+) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            min: 1760,
+            max: 1840,
+            two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
+                earliest_year: 1750,
+                pivot: SlidingWindowPivot::new(50).unwrap(),
+            },
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    match expected_year {
+        Some(year) => assert_eq!(result.year.value, Extracted::Found(year)),
+        None => assert!(result.year.value.is_not_found()),
+    }
+}
+
+/// When earliest_year is entirely outside YearConfig::min/max, every two-digit
+/// input should return NotFound — the window produces no valid years.
+#[rstest]
+#[case("00")]
+#[case("49")]
+#[case("50")]
+#[case("99")]
+fn year_two_digit_sliding_window_earliest_year_outside_range(#[case] utterance: &str) {
+    // Window: earliest_year 1500, pivot 50 → produces 1500–1599.
+    // YearConfig::min/max: 1760–1840 → no overlap, all values rejected.
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            min: 1760,
+            max: 1840,
+            two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
+                earliest_year: 1500,
+                pivot: SlidingWindowPivot::new(50).unwrap(),
+            },
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert!(result.year.value.is_not_found());
+}
+
 // -------------------------------------------------------------------------
-// Two-digit year expansion: Always2000s
+// Two-digit year expansion: Always(Century(2000))
 // -------------------------------------------------------------------------
 
-/// When TwoDigitYearExpansion::Always2000s is configured, all two-digit
-/// years map to 2000–2099.
+/// When TwoDigitYearExpansion::Always(Century(2000)) is configured, all
+/// two-digit years map to 2000–2099.
 #[rstest]
 #[case("00", 2000)]
 #[case("24", 2024)]
@@ -139,7 +212,7 @@ fn year_two_digit_always_2000s(#[case] utterance: &str, #[case] expected_year: i
     let config = Config {
         year: YearConfig {
             expected: IsExpected::Yes,
-            two_digit_expansion: TwoDigitYearExpansion::Always2000s,
+            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000).unwrap()),
             ..Default::default()
         },
         day: DayConfig {
@@ -441,7 +514,8 @@ fn year_future_years(#[case] utterance: &str, #[case] expected_year: i32) {
     assert_eq!(result.year.value, Extracted::Found(expected_year));
 }
 
-/// Two-digit years with Always2000s expansion: all values 00–99 map to 2000–2099.
+/// Two-digit years with Always(Century(2000)) expansion: all values 00–99 map
+/// to 2000–2099.
 #[rstest]
 #[case("00", 2000)]
 #[case("25", 2025)]
@@ -452,7 +526,7 @@ fn year_two_digit_always_2000s_all_values(#[case] utterance: &str, #[case] expec
     let config = Config {
         year: YearConfig {
             expected: IsExpected::Yes,
-            two_digit_expansion: TwoDigitYearExpansion::Always2000s,
+            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000).unwrap()),
             ..Default::default()
         },
         day: DayConfig {
@@ -469,6 +543,71 @@ fn year_two_digit_always_2000s_all_values(#[case] utterance: &str, #[case] expec
     let result = extract(input);
 
     assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+// -------------------------------------------------------------------------
+// Two-digit year expansion: Always(Century) — non-2000s centuries
+// -------------------------------------------------------------------------
+
+/// Always(Century(1800)): all two-digit values map to 1800–1899.
+#[rstest]
+#[case("00", 1800)]
+#[case("34", 1834)]
+#[case("50", 1850)]
+#[case("88", 1888)]
+#[case("99", 1899)]
+fn year_two_digit_always_1800s(#[case] utterance: &str, #[case] expected_year: i32) {
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(1800).unwrap()),
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert_eq!(result.year.value, Extracted::Found(expected_year));
+}
+
+/// Always(Century) with a YearConfig::min/max that is entirely outside the
+/// century: every two-digit input should return NotFound.
+#[rstest]
+#[case("00")]
+#[case("50")]
+#[case("99")]
+fn year_two_digit_always_century_outside_range(#[case] utterance: &str) {
+    // Century(1800) → produces 1800–1899, but min/max is 1760–1840.
+    // 1841–1899 are rejected; 1800–1840 would be accepted but that's 41 values.
+    // This test checks a century entirely outside the range: Century(1700)
+    // produces 1700–1799, which is fully below min 1800.
+    let config = Config {
+        year: YearConfig {
+            expected: IsExpected::Yes,
+            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(1700).unwrap()),
+            min: 1800,
+            max: 1899,
+            ..Default::default()
+        },
+        day: DayConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        month: MonthConfig {
+            expected: IsExpected::No,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let result = extract(input_with_config(utterance, config));
+    assert!(result.year.value.is_not_found());
 }
 
 /// Two-digit years with Literal expansion: values stay as-is.
