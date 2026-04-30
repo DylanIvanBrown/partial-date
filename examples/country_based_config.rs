@@ -1,6 +1,8 @@
 //! An example with country based config to use the correct date formatting for users from different countries.
 //! Run with: `cargo run --example country_based_config`
 
+use partial_date::models::{self, ComponentOrder, Config, DateComponent};
+
 fn main() {
     println!("Example: Country-Based Config");
     println!("============================\n");
@@ -41,7 +43,7 @@ fn main() {
         // users with their appropriate date configs
         let config = user.country.get_config();
 
-        let input = partial_date::models::Input {
+        let input = models::Input {
             utterance: user.date_input.clone(),
             config: Some(config),
         };
@@ -74,21 +76,21 @@ pub enum Country {
 
 // Implement a method to get the appropriate config for each country
 impl Country {
-    pub fn get_config(&self) -> partial_date::models::Config {
+    pub fn get_config(&self) -> Config {
         match self {
-            Country::SouthAfrica => partial_date::models::Config {
-                component_order: partial_date::models::ComponentOrder {
-                    first: partial_date::models::DateComponent::Day,
-                    second: partial_date::models::DateComponent::Month,
-                    third: partial_date::models::DateComponent::Year,
+            Country::SouthAfrica => Config {
+                component_order: ComponentOrder {
+                    first: DateComponent::Day,
+                    second: DateComponent::Month,
+                    third: DateComponent::Year,
                 },
                 ..Default::default()
             },
-            Country::Liberia => partial_date::models::Config {
-                component_order: partial_date::models::ComponentOrder {
-                    first: partial_date::models::DateComponent::Month,
-                    second: partial_date::models::DateComponent::Day,
-                    third: partial_date::models::DateComponent::Year,
+            Country::Liberia => Config {
+                component_order: ComponentOrder {
+                    first: DateComponent::Month,
+                    second: DateComponent::Day,
+                    third: DateComponent::Year,
                 },
                 ..Default::default()
             },

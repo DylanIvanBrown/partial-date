@@ -442,9 +442,9 @@ fn config_default_year_expansion_is_sliding_window() {
 #[rstest]
 #[case(TwoDigitYearExpansion::SlidingWindow {
     earliest_year: 1950,
-    pivot: SlidingWindowPivot::new(50).unwrap(),
+    pivot: SlidingWindowPivot::new(50),
 })]
-#[case(TwoDigitYearExpansion::Always(Century::new(2000).unwrap()))]
+#[case(TwoDigitYearExpansion::Always(Century::new(2000)))]
 #[case(TwoDigitYearExpansion::Literal)]
 fn config_year_expansion_mode_settable(#[case] expansion: TwoDigitYearExpansion) {
     let config = YearConfig {
@@ -458,23 +458,48 @@ fn config_year_expansion_mode_settable(#[case] expansion: TwoDigitYearExpansion)
 // SlidingWindowPivot validation
 // -------------------------------------------------------------------------
 
-/// SlidingWindowPivot::new should accept values in the range 1–99.
+/// SlidingWindowPivot::new should succeed for values in the range 1–99.
 #[rstest]
 #[case(1)]
 #[case(50)]
 #[case(70)]
 #[case(99)]
-fn sliding_window_pivot_valid(#[case] pivot: u8) {
-    assert!(SlidingWindowPivot::new(pivot).is_ok());
+fn sliding_window_pivot_new_valid(#[case] pivot: u8) {
+    // new() returns Self directly — just confirm it doesn't panic.
+    let _ = SlidingWindowPivot::new(pivot);
 }
 
-/// SlidingWindowPivot::new should reject 0 and values >= 100.
+/// SlidingWindowPivot::new should panic for 0.
+#[test]
+#[should_panic(expected = "SlidingWindowPivot must be in the range 1–99")]
+fn sliding_window_pivot_new_panics_on_zero() {
+    let _ = SlidingWindowPivot::new(0);
+}
+
+/// SlidingWindowPivot::new should panic for values >= 100.
+#[test]
+#[should_panic(expected = "SlidingWindowPivot must be in the range 1–99")]
+fn sliding_window_pivot_new_panics_on_over_99() {
+    let _ = SlidingWindowPivot::new(100);
+}
+
+/// SlidingWindowPivot::try_new should return Ok for values in the range 1–99.
+#[rstest]
+#[case(1)]
+#[case(50)]
+#[case(70)]
+#[case(99)]
+fn sliding_window_pivot_try_new_valid(#[case] pivot: u8) {
+    assert!(SlidingWindowPivot::try_new(pivot).is_ok());
+}
+
+/// SlidingWindowPivot::try_new should return Err for 0 and values >= 100.
 #[rstest]
 #[case(0)]
 #[case(100)]
 #[case(255)]
-fn sliding_window_pivot_invalid(#[case] pivot: u8) {
-    let result = SlidingWindowPivot::new(pivot);
+fn sliding_window_pivot_try_new_invalid(#[case] pivot: u8) {
+    let result = SlidingWindowPivot::try_new(pivot);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -482,7 +507,7 @@ fn sliding_window_pivot_invalid(#[case] pivot: u8) {
     ));
 }
 
-/// TryFrom<u8> for SlidingWindowPivot mirrors new().
+/// TryFrom<u8> for SlidingWindowPivot delegates to try_new.
 #[test]
 fn sliding_window_pivot_try_from_u8() {
     let pivot: Result<SlidingWindowPivot, _> = 50_u8.try_into();
@@ -494,7 +519,7 @@ fn sliding_window_pivot_try_from_u8() {
 /// From<SlidingWindowPivot> for u8 round-trips the value.
 #[test]
 fn sliding_window_pivot_into_u8() {
-    let pivot = SlidingWindowPivot::new(50).unwrap();
+    let pivot = SlidingWindowPivot::new(50);
     let value: u8 = pivot.into();
     assert_eq!(value, 50);
 }
@@ -503,7 +528,7 @@ fn sliding_window_pivot_into_u8() {
 // Century validation
 // -------------------------------------------------------------------------
 
-/// Century::new should accept values divisible by 100.
+/// Century::new should succeed for values divisible by 100.
 #[rstest]
 #[case(0)]
 #[case(100)]
@@ -511,17 +536,36 @@ fn sliding_window_pivot_into_u8() {
 #[case(2000)]
 #[case(2100)]
 fn century_new_valid(#[case] year: i32) {
-    assert!(Century::new(year).is_ok());
+    // new() returns Self directly — just confirm it doesn't panic.
+    let _ = Century::new(year);
 }
 
-/// Century::new should reject values not divisible by 100.
+/// Century::new should panic for values not divisible by 100.
+#[test]
+#[should_panic(expected = "Century must be divisible by 100")]
+fn century_new_panics_on_non_boundary() {
+    let _ = Century::new(1756);
+}
+
+/// Century::try_new should return Ok for values divisible by 100.
+#[rstest]
+#[case(0)]
+#[case(100)]
+#[case(1800)]
+#[case(2000)]
+#[case(2100)]
+fn century_try_new_valid(#[case] year: i32) {
+    assert!(Century::try_new(year).is_ok());
+}
+
+/// Century::try_new should return Err for values not divisible by 100.
 #[rstest]
 #[case(1)]
 #[case(1756)]
 #[case(1801)]
 #[case(2025)]
-fn century_new_invalid(#[case] year: i32) {
-    let result = Century::new(year);
+fn century_try_new_invalid(#[case] year: i32) {
+    let result = Century::try_new(year);
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -529,7 +573,7 @@ fn century_new_invalid(#[case] year: i32) {
     ));
 }
 
-/// TryFrom<i32> for Century mirrors new().
+/// TryFrom<i32> for Century delegates to try_new.
 #[test]
 fn century_try_from_i32() {
     let century: Result<Century, _> = 1800_i32.try_into();
@@ -541,7 +585,7 @@ fn century_try_from_i32() {
 /// From<Century> for i32 round-trips the value.
 #[test]
 fn century_into_i32() {
-    let century = Century::new(1800).unwrap();
+    let century = Century::new(1800);
     let value: i32 = century.into();
     assert_eq!(value, 1800);
 }
@@ -766,7 +810,7 @@ fn config_single_digit_year_expansion_with_full_date_context() {
 /// A custom SlidingWindow with a non-default pivot can be stored in YearConfig.
 #[test]
 fn config_custom_sliding_window() {
-    let pivot = SlidingWindowPivot::new(70).unwrap();
+    let pivot = SlidingWindowPivot::new(70);
     let expansion = TwoDigitYearExpansion::SlidingWindow {
         earliest_year: 1970,
         pivot,
@@ -788,12 +832,12 @@ fn config_custom_sliding_window() {
 /// Always(Century) maps all two-digit values into the given century.
 /// 00 → century, 99 → century + 99.
 #[rstest]
-#[case(Century::new(2000).unwrap(), "00", 2000)]
-#[case(Century::new(2000).unwrap(), "34", 2034)]
-#[case(Century::new(2000).unwrap(), "99", 2099)]
-#[case(Century::new(1800).unwrap(), "00", 1800)]
-#[case(Century::new(1800).unwrap(), "34", 1834)]
-#[case(Century::new(1800).unwrap(), "99", 1899)]
+#[case(Century::new(2000), "00", 2000)]
+#[case(Century::new(2000), "34", 2034)]
+#[case(Century::new(2000), "99", 2099)]
+#[case(Century::new(1800), "00", 1800)]
+#[case(Century::new(1800), "34", 1834)]
+#[case(Century::new(1800), "99", 1899)]
 fn config_always_century_expansion(
     #[case] century: Century,
     #[case] utterance: &str,
@@ -824,10 +868,10 @@ fn config_always_century_expansion(
 /// Always(Century) with a YearConfig::min/max that excludes part of the
 /// century: values that expand outside the range should return NotFound.
 #[rstest]
-#[case(Century::new(1800).unwrap(), "00", 1800, 1850)] // 00 → 1800, inside range
-#[case(Century::new(1800).unwrap(), "50", 1800, 1850)] // 50 → 1850, at boundary (inclusive)
-#[case(Century::new(1800).unwrap(), "51", 1800, 1850)] // 51 → 1851, outside range
-#[case(Century::new(1800).unwrap(), "99", 1800, 1850)] // 99 → 1899, outside range
+#[case(Century::new(1800), "00", 1800, 1850)] // 00 → 1800, inside range
+#[case(Century::new(1800), "50", 1800, 1850)] // 50 → 1850, at boundary (inclusive)
+#[case(Century::new(1800), "51", 1800, 1850)] // 51 → 1851, outside range
+#[case(Century::new(1800), "99", 1800, 1850)] // 99 → 1899, outside range
 fn config_always_century_expansion_clamped_by_min_max(
     #[case] century: Century,
     #[case] utterance: &str,
@@ -860,4 +904,332 @@ fn config_always_century_expansion_clamped_by_min_max(
     } else {
         assert!(result.year.value.is_not_found());
     }
+}
+
+// -------------------------------------------------------------------------
+// Builder pattern: DayConfig
+// -------------------------------------------------------------------------
+
+/// with_range sets min and max on DayConfig.
+#[test]
+fn day_config_builder_with_range() {
+    let config = DayConfig::default().with_range(1, 28);
+    assert_eq!(config.min, 1);
+    assert_eq!(config.max, 28);
+}
+
+/// with_range preserves other fields unchanged.
+#[test]
+fn day_config_builder_with_range_preserves_other_fields() {
+    let config = DayConfig::default()
+        .with_expected(IsExpected::Yes)
+        .with_range(5, 25);
+    assert_eq!(config.expected, IsExpected::Yes);
+    assert_eq!(config.min, 5);
+    assert_eq!(config.max, 25);
+}
+
+/// with_range panics when min > max.
+#[test]
+#[should_panic(expected = "DayConfig::with_range min")]
+fn day_config_builder_with_range_panics_when_min_exceeds_max() {
+    let _ = DayConfig::default().with_range(28, 1);
+}
+
+/// try_with_range returns Ok when min <= max.
+#[test]
+fn day_config_builder_try_with_range_ok() {
+    let result = DayConfig::default().try_with_range(1, 28);
+    assert!(result.is_ok());
+    let config = result.unwrap();
+    assert_eq!(config.min, 1);
+    assert_eq!(config.max, 28);
+}
+
+/// try_with_range returns Err when min > max.
+#[test]
+fn day_config_builder_try_with_range_err() {
+    let result = DayConfig::default().try_with_range(28, 1);
+    assert!(matches!(
+        result.unwrap_err(),
+        ConfigRangeError::MinExceedsMax { min: 28, max: 1 }
+    ));
+}
+
+/// with_expected sets the expected field.
+#[rstest]
+#[case(IsExpected::Yes)]
+#[case(IsExpected::No)]
+#[case(IsExpected::Maybe)]
+fn day_config_builder_with_expected(#[case] expected: IsExpected) {
+    let config = DayConfig::default().with_expected(expected);
+    assert_eq!(config.expected, expected);
+}
+
+/// with_default sets the default field to Some.
+#[test]
+fn day_config_builder_with_default() {
+    let config = DayConfig::default().with_default(15);
+    assert_eq!(config.default, Some(15));
+}
+
+/// Builder methods on DayConfig can be chained together.
+#[test]
+fn day_config_builder_chained() {
+    let config = DayConfig::default()
+        .with_range(1, 28)
+        .with_expected(IsExpected::Yes)
+        .with_default(1);
+    assert_eq!(config.min, 1);
+    assert_eq!(config.max, 28);
+    assert_eq!(config.expected, IsExpected::Yes);
+    assert_eq!(config.default, Some(1));
+}
+
+// -------------------------------------------------------------------------
+// Builder pattern: MonthConfig
+// -------------------------------------------------------------------------
+
+/// with_range sets min and max on MonthConfig.
+#[test]
+fn month_config_builder_with_range() {
+    let config = MonthConfig::default().with_range(3, 9);
+    assert_eq!(config.min, 3);
+    assert_eq!(config.max, 9);
+}
+
+/// with_range panics when min > max.
+#[test]
+#[should_panic(expected = "MonthConfig::with_range min")]
+fn month_config_builder_with_range_panics_when_min_exceeds_max() {
+    let _ = MonthConfig::default().with_range(9, 3);
+}
+
+/// try_with_range returns Ok when min <= max.
+#[test]
+fn month_config_builder_try_with_range_ok() {
+    let result = MonthConfig::default().try_with_range(3, 9);
+    assert!(result.is_ok());
+}
+
+/// try_with_range returns Err when min > max.
+#[test]
+fn month_config_builder_try_with_range_err() {
+    let result = MonthConfig::default().try_with_range(9, 3);
+    assert!(matches!(
+        result.unwrap_err(),
+        ConfigRangeError::MinExceedsMax { min: 9, max: 3 }
+    ));
+}
+
+/// Builder methods on MonthConfig can be chained together.
+#[test]
+fn month_config_builder_chained() {
+    let config = MonthConfig::default()
+        .with_range(1, 6)
+        .with_expected(IsExpected::Yes)
+        .with_default(1);
+    assert_eq!(config.min, 1);
+    assert_eq!(config.max, 6);
+    assert_eq!(config.expected, IsExpected::Yes);
+    assert_eq!(config.default, Some(1));
+}
+
+// -------------------------------------------------------------------------
+// Builder pattern: YearConfig
+// -------------------------------------------------------------------------
+
+/// with_range sets min and max on YearConfig.
+#[test]
+fn year_config_builder_with_range() {
+    let config = YearConfig::default().with_range(1760, 1840);
+    assert_eq!(config.min, 1760);
+    assert_eq!(config.max, 1840);
+}
+
+/// with_range panics when min > max.
+#[test]
+#[should_panic(expected = "YearConfig::with_range min")]
+fn year_config_builder_with_range_panics_when_min_exceeds_max() {
+    let _ = YearConfig::default().with_range(1840, 1760);
+}
+
+/// try_with_range returns Ok when min <= max.
+#[test]
+fn year_config_builder_try_with_range_ok() {
+    let result = YearConfig::default().try_with_range(1760, 1840);
+    assert!(result.is_ok());
+    let config = result.unwrap();
+    assert_eq!(config.min, 1760);
+    assert_eq!(config.max, 1840);
+}
+
+/// try_with_range returns Err when min > max.
+#[test]
+fn year_config_builder_try_with_range_err() {
+    let result = YearConfig::default().try_with_range(1840, 1760);
+    assert!(matches!(
+        result.unwrap_err(),
+        ConfigRangeError::MinExceedsMax {
+            min: 1840,
+            max: 1760
+        }
+    ));
+}
+
+/// with_expected sets the expected field on YearConfig.
+#[test]
+fn year_config_builder_with_expected() {
+    let config = YearConfig::default().with_expected(IsExpected::Yes);
+    assert_eq!(config.expected, IsExpected::Yes);
+}
+
+/// with_default sets the default field on YearConfig.
+#[test]
+fn year_config_builder_with_default() {
+    let config = YearConfig::default().with_default(2025);
+    assert_eq!(config.default, Some(2025));
+}
+
+/// with_two_digit_expansion sets the expansion strategy.
+#[test]
+fn year_config_builder_with_two_digit_expansion() {
+    let expansion = TwoDigitYearExpansion::Always(Century::new(1800));
+    let config = YearConfig::default().with_two_digit_expansion(expansion);
+    assert_eq!(config.two_digit_expansion, expansion);
+}
+
+/// with_single_digit_expansion enables single-digit year expansion.
+#[test]
+fn year_config_builder_with_single_digit_expansion() {
+    let config = YearConfig::default().with_single_digit_expansion(true);
+    assert!(config.single_digit_year_expansion);
+}
+
+/// Builder methods on YearConfig can be fully chained.
+#[test]
+fn year_config_builder_chained() {
+    let config = YearConfig::default()
+        .with_range(1760, 1840)
+        .with_expected(IsExpected::Yes)
+        .with_two_digit_expansion(TwoDigitYearExpansion::SlidingWindow {
+            earliest_year: 1750,
+            pivot: SlidingWindowPivot::new(50),
+        })
+        .with_single_digit_expansion(false);
+    assert_eq!(config.min, 1760);
+    assert_eq!(config.max, 1840);
+    assert_eq!(config.expected, IsExpected::Yes);
+    assert!(!config.single_digit_year_expansion);
+}
+
+/// A fully chained YearConfig produces correct extraction results.
+#[rstest]
+#[case("00", Some(1800))]
+#[case("34", Some(1834))]
+#[case("50", None)] // 1750 < min 1760 → rejected
+#[case("60", Some(1760))]
+#[case("99", Some(1799))]
+fn year_config_builder_extraction(#[case] utterance: &str, #[case] expected: Option<i32>) {
+    let config = Config::default().with_year(
+        YearConfig::default()
+            .with_range(1760, 1840)
+            .with_expected(IsExpected::Yes)
+            .with_two_digit_expansion(TwoDigitYearExpansion::SlidingWindow {
+                earliest_year: 1750,
+                pivot: SlidingWindowPivot::new(50),
+            }),
+    );
+    let result = extract(input_with_config(utterance, config));
+    match expected {
+        Some(year) => assert_eq!(result.year.value, Extracted::Found(year)),
+        None => assert!(result.year.value.is_not_found()),
+    }
+}
+
+// -------------------------------------------------------------------------
+// Builder pattern: Config
+// -------------------------------------------------------------------------
+
+/// with_day replaces the day sub-config on Config.
+#[test]
+fn config_builder_with_day() {
+    let config = Config::default().with_day(DayConfig::default().with_range(1, 28));
+    assert_eq!(config.day.max, 28);
+}
+
+/// with_month replaces the month sub-config on Config.
+#[test]
+fn config_builder_with_month() {
+    let config =
+        Config::default().with_month(MonthConfig::default().with_expected(IsExpected::Yes));
+    assert_eq!(config.month.expected, IsExpected::Yes);
+}
+
+/// with_year replaces the year sub-config on Config.
+#[test]
+fn config_builder_with_year() {
+    let config = Config::default().with_year(YearConfig::default().with_range(1760, 1840));
+    assert_eq!(config.year.min, 1760);
+    assert_eq!(config.year.max, 1840);
+}
+
+/// with_component_order sets the component order.
+#[test]
+fn config_builder_with_component_order() {
+    let order = ComponentOrder::new(
+        DateComponent::Month,
+        DateComponent::Day,
+        DateComponent::Year,
+    )
+    .unwrap();
+    let config = Config::default().with_component_order(order);
+    assert_eq!(config.component_order.first, DateComponent::Month);
+}
+
+/// with_no_separator enables no-separator parsing.
+#[test]
+fn config_builder_with_no_separator() {
+    let config = Config::default().with_no_separator(true);
+    assert!(config.no_separator);
+}
+
+/// with_extra_separators sets additional separators.
+#[test]
+fn config_builder_with_extra_separators() {
+    let config = Config::default().with_extra_separators(vec!["||".to_string(), " - ".to_string()]);
+    assert_eq!(config.extra_separators.len(), 2);
+}
+
+/// with_letter_o_substitution disables the substitution.
+#[test]
+fn config_builder_with_letter_o_substitution() {
+    let config = Config::default().with_letter_o_substitution(false);
+    assert!(!config.letter_o_substitution);
+}
+
+/// A fully chained Config produces correct extraction results.
+#[test]
+fn config_builder_full_chain_extraction() {
+    let config = Config::default()
+        .with_day(DayConfig::default().with_expected(IsExpected::Yes))
+        .with_month(MonthConfig::default().with_expected(IsExpected::Yes))
+        .with_year(
+            YearConfig::default()
+                .with_range(2000, 2099)
+                .with_expected(IsExpected::Yes)
+                .with_two_digit_expansion(TwoDigitYearExpansion::Always(Century::new(2000))),
+        )
+        .with_component_order(
+            ComponentOrder::new(
+                DateComponent::Day,
+                DateComponent::Month,
+                DateComponent::Year,
+            )
+            .unwrap(),
+        );
+    let result = extract(input_with_config("15/06/24", config));
+    assert_eq!(result.day.value, Extracted::Found(15));
+    assert_eq!(result.month.number, Extracted::Found(6));
+    assert_eq!(result.year.value, Extracted::Found(2024));
 }

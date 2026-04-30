@@ -6,7 +6,10 @@
 
 use std::io::{self, BufRead, Write};
 
-use partial_date::models::{IsExpected, SlidingWindowPivot};
+use partial_date::models::{
+    Century, ComponentOrder, Config, DateComponent, DayConfig, IsExpected, MonthConfig,
+    SlidingWindowPivot, TwoDigitYearExpansion, YearConfig,
+};
 
 fn main() {
     println!("Partial Date Extraction Examples");
@@ -14,7 +17,6 @@ fn main() {
 
     println!("Welcome to this interactive console example of how the library can be used!");
 
-    //TODO: Create a loop in the console that allows the user to select the scenario they want and then enter dates and see what the partial date library parses them as. Then allows the user to exit that loop by typing exit and selecting another date format to test. If they type quit then it ends the program.
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     'scenario: loop {
@@ -46,7 +48,7 @@ fn main() {
             stdin.lock().read_line(&mut input).unwrap();
             match input.trim() {
                 "quit" => break 'scenario,
-                "back" => break, // back to scenario selection
+                "back" => break,
                 text => {
                     let result = partial_date::extract::extract(partial_date::models::Input {
                         utterance: text.to_string(),
@@ -70,96 +72,79 @@ pub enum PreDefinedConfigs {
 }
 
 impl PreDefinedConfigs {
-    pub fn get_config(&self) -> partial_date::models::Config {
+    pub fn get_config(&self) -> Config {
         match self {
-            PreDefinedConfigs::StrictDMY => partial_date::models::Config {
-                component_order: partial_date::models::ComponentOrder {
-                    first: partial_date::models::DateComponent::Day,
-                    second: partial_date::models::DateComponent::Month,
-                    third: partial_date::models::DateComponent::Year,
-                },
-                day: partial_date::models::DayConfig {
-                    min: 1,
-                    max: 31,
-                    default: None,
-                    expected: IsExpected::Yes,
-                },
-                month: partial_date::models::MonthConfig {
-                    default: None,
-                    expected: IsExpected::Yes,
-                    min: 1,
-                    max: 12,
-                },
-                year: partial_date::models::YearConfig {
-                    min: 1,
-                    max: 3000,
-                    default: None,
-                    expected: IsExpected::Yes,
-                    two_digit_expansion: partial_date::models::TwoDigitYearExpansion::Literal,
-                    single_digit_year_expansion: false,
-                },
-                letter_o_substitution: false,
-                ..Default::default()
-            },
-            // Wide ranging historical dates that cannot use 2 digit year
+            // Strictly day-first numeric dates with all three components
+            // required. Letter-O substitution is disabled since this scenario
+            // expects clean numeric input only.
+            PreDefinedConfigs::StrictDMY => Config::default()
+                .with_day(
+                    DayConfig::default()
+                        .with_expected(IsExpected::Yes),
+                )
+                .with_month(
+                    MonthConfig::default()
+                        .with_expected(IsExpected::Yes)
+                )
+                .with_year(
+                    YearConfig::default()
+                        .with_range(1, 3000)
+                        .with_expected(IsExpected::Yes)
+                        .with_two_digit_expansion(TwoDigitYearExpansion::Literal),
+                )
+                .with_component_order(
+                    ComponentOrder::new(
+                        DateComponent::Day,
+                        DateComponent::Month,
+                        DateComponent::Year,
+                    )
+                    .unwrap(),
+                )
+                .with_letter_o_substitution(false),
+
+            // Wide ranging historical dates that cannot use 2-digit year
             // expansion as there is no way to know which centuries the dates
-            // will be from. This is an example of how the config can be used to
-            // make minimal assumptions about the data when there is a lot of
-            // uncertainty.
-            PreDefinedConfigs::AllHistoricalDates => partial_date::models::Config {
-                year: partial_date::models::YearConfig {
-                    min: 1,
-                    max: 3000,
-                    default: None,
-                    expected: IsExpected::Yes,
-                    two_digit_expansion: partial_date::models::TwoDigitYearExpansion::Literal,
-                    single_digit_year_expansion: false,
-                },
-                ..Default::default()
-            },
-            PreDefinedConfigs::IndustrialRevolutionDates => partial_date::models::Config {
-                // Constraining the year range to dates in that period and
-                // allowing a sliding window for 2-digit years to select years
-                // within that range. This is an example of how the config can
-                // be used to make assumptions about the data based on the
-                // context of the project.
-                year: partial_date::models::YearConfig {
-                    min: 1760,
-                    max: 1840,
-                    default: None,
-                    two_digit_expansion:
-                        partial_date::models::TwoDigitYearExpansion::SlidingWindow {
+            // will be from. Minimal assumptions about the data when there is
+            // a lot of uncertainty.
+            PreDefinedConfigs::AllHistoricalDates => Config::default().with_year(
+                YearConfig::default()
+                    .with_range(1, 3000)
+                    .with_expected(IsExpected::Yes)
+                    .with_two_digit_expansion(TwoDigitYearExpansion::Literal),
+            ),
+
+            // Constrains the year range to the Industrial Revolution period and
+            // uses a sliding window for 2-digit years centred on 1800.
+            // Component order matches Great Britain's common DD/MM/YYYY format.
+            PreDefinedConfigs::IndustrialRevolutionDates => Config::default()
+                .with_year(
+                    YearConfig::default()
+                        .with_range(1760, 1840)
+                        .with_expected(IsExpected::Yes)
+                        .with_two_digit_expansion(TwoDigitYearExpansion::SlidingWindow {
                             earliest_year: 1750,
-                            pivot: SlidingWindowPivot::new(50).unwrap(),
-                        },
-                    single_digit_year_expansion: false,
-                    expected: partial_date::models::IsExpected::Yes,
-                },
-                // A component order that matches the common formats for Great
-                // Britain where the industrial revolution largely took place
-                component_order: partial_date::models::ComponentOrder {
-                    first: partial_date::models::DateComponent::Day,
-                    second: partial_date::models::DateComponent::Month,
-                    third: partial_date::models::DateComponent::Year,
-                },
-                ..Default::default()
-            },
-            // Config for children under 18, which requires that their birth
-            // years are in the 2000s and not in the future. Uses the shorthand
-            // for always 2000s years that the library provides.
-            PreDefinedConfigs::ChildrenBirthdays => partial_date::models::Config {
-                year: partial_date::models::YearConfig {
-                    min: 2000,
-                    max: 2026,
-                    default: None,
-                    single_digit_year_expansion: true,
-                    two_digit_expansion: partial_date::models::TwoDigitYearExpansion::Always(
-                        partial_date::models::Century::new(2000).unwrap(),
-                    ),
-                    expected: partial_date::models::IsExpected::Yes,
-                },
-                ..Default::default()
-            },
+                            pivot: SlidingWindowPivot::new(50),
+                        }),
+                )
+                .with_component_order(
+                    ComponentOrder::new(
+                        DateComponent::Day,
+                        DateComponent::Month,
+                        DateComponent::Year,
+                    )
+                    .unwrap(),
+                ),
+
+            // Children under 18 — birth years must be in the 2000s and not in
+            // the future. Always(Century(2000)) maps all 2-digit values to the
+            // 2000s; the max of 2026 rejects future years.
+            PreDefinedConfigs::ChildrenBirthdays => Config::default().with_year(
+                YearConfig::default()
+                    .with_range(2000, 2026)
+                    .with_expected(IsExpected::Yes)
+                    .with_two_digit_expansion(TwoDigitYearExpansion::Always(Century::new(2000)))
+                    .with_single_digit_expansion(true),
+            ),
         }
     }
 }

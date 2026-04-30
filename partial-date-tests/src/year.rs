@@ -97,7 +97,7 @@ fn year_two_digit_custom_sliding_window(#[case] utterance: &str, #[case] expecte
             expected: IsExpected::Yes,
             two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
                 earliest_year: 1970,
-                pivot: SlidingWindowPivot::new(70).unwrap(),
+                pivot: SlidingWindowPivot::new(70),
             },
             ..Default::default()
         },
@@ -141,7 +141,7 @@ fn year_two_digit_industrial_revolution_window(
             max: 1840,
             two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
                 earliest_year: 1750,
-                pivot: SlidingWindowPivot::new(50).unwrap(),
+                pivot: SlidingWindowPivot::new(50),
             },
             ..Default::default()
         },
@@ -179,7 +179,7 @@ fn year_two_digit_sliding_window_earliest_year_outside_range(#[case] utterance: 
             max: 1840,
             two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
                 earliest_year: 1500,
-                pivot: SlidingWindowPivot::new(50).unwrap(),
+                pivot: SlidingWindowPivot::new(50),
             },
             ..Default::default()
         },
@@ -212,7 +212,7 @@ fn year_two_digit_always_2000s(#[case] utterance: &str, #[case] expected_year: i
     let config = Config {
         year: YearConfig {
             expected: IsExpected::Yes,
-            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000).unwrap()),
+            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000)),
             ..Default::default()
         },
         day: DayConfig {
@@ -526,7 +526,7 @@ fn year_two_digit_always_2000s_all_values(#[case] utterance: &str, #[case] expec
     let config = Config {
         year: YearConfig {
             expected: IsExpected::Yes,
-            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000).unwrap()),
+            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000)),
             ..Default::default()
         },
         day: DayConfig {
@@ -560,7 +560,7 @@ fn year_two_digit_always_1800s(#[case] utterance: &str, #[case] expected_year: i
     let config = Config {
         year: YearConfig {
             expected: IsExpected::Yes,
-            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(1800).unwrap()),
+            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(1800)),
             ..Default::default()
         },
         day: DayConfig {
@@ -591,7 +591,7 @@ fn year_two_digit_always_century_outside_range(#[case] utterance: &str) {
     let config = Config {
         year: YearConfig {
             expected: IsExpected::Yes,
-            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(1700).unwrap()),
+            two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(1700)),
             min: 1800,
             max: 1899,
             ..Default::default()

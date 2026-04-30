@@ -127,6 +127,7 @@ pub fn tokenise(utterance: &str, config: &Config) -> Vec<Token> {
     // tokens. Pre-allocating exactly 3 avoids any reallocation.
     let mut tokens: Vec<Token> = Vec::with_capacity(3);
 
+    // TODO: Split this into it's own fn and add unit tests for it. It's doing a lot of work and has some non-trivial logic that deserves its own tests.
     // Label the outer loop so the inner loop can break out of both at once
     // when the token limit is reached (see the `break 'outer` below).
     'outer: for chunk in raw_chunks {

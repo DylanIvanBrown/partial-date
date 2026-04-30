@@ -146,6 +146,75 @@ impl Default for DayConfig {
     }
 }
 
+impl DayConfig {
+    /// Set the valid day range.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min > max`. Use [`DayConfig::try_with_range`] when the
+    /// values come from dynamic input and you need to handle the error.
+    ///
+    /// ```
+    /// use partial_date::models::DayConfig;
+    ///
+    /// let config = DayConfig::default().with_range(1, 28);
+    /// ```
+    pub fn with_range(self, min: u8, max: u8) -> Self {
+        assert!(
+            min <= max,
+            "DayConfig::with_range min ({min}) must not exceed max ({max})"
+        );
+        DayConfig { min, max, ..self }
+    }
+
+    /// Set the valid day range, returning `Err` if `min > max`.
+    ///
+    /// Use this when the range values come from dynamic input. For
+    /// known-valid static values, prefer [`DayConfig::with_range`].
+    pub fn try_with_range(self, min: u8, max: u8) -> Result<Self, ConfigRangeError> {
+        if min > max {
+            return Err(ConfigRangeError::MinExceedsMax {
+                min: min as i32,
+                max: max as i32,
+            });
+        }
+        Ok(DayConfig { min, max, ..self })
+    }
+
+    /// Set whether a day component is expected in the input.
+    ///
+    /// ```
+    /// use partial_date::models::{DayConfig, IsExpected};
+    ///
+    /// let config = DayConfig::default().with_expected(IsExpected::Yes);
+    /// ```
+    pub fn with_expected(self, expected: IsExpected) -> Self {
+        DayConfig { expected, ..self }
+    }
+
+    /// Set the default day value to use when no day is found in the input.
+    ///
+    /// ```
+    /// use partial_date::models::DayConfig;
+    ///
+    /// let config = DayConfig::default().with_default(1);
+    /// ```
+    pub fn with_default(self, default: u8) -> Self {
+        DayConfig {
+            default: Some(default),
+            ..self
+        }
+    }
+}
+
+/// Error returned by [`DayConfig::try_with_range`], [`MonthConfig::try_with_range`],
+/// and [`YearConfig::try_with_range`] when the provided range is invalid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigRangeError {
+    /// The minimum value exceeds the maximum value.
+    MinExceedsMax { min: i32, max: i32 },
+}
+
 /// Configuration for month extraction.
 #[derive(Debug, Clone)]
 pub struct MonthConfig {
@@ -191,6 +260,67 @@ impl Default for MonthConfig {
     }
 }
 
+impl MonthConfig {
+    /// Set the valid month range.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min > max`. Use [`MonthConfig::try_with_range`] when the
+    /// values come from dynamic input and you need to handle the error.
+    ///
+    /// ```
+    /// use partial_date::models::MonthConfig;
+    ///
+    /// let config = MonthConfig::default().with_range(1, 6);
+    /// ```
+    pub fn with_range(self, min: u8, max: u8) -> Self {
+        assert!(
+            min <= max,
+            "MonthConfig::with_range min ({min}) must not exceed max ({max})"
+        );
+        MonthConfig { min, max, ..self }
+    }
+
+    /// Set the valid month range, returning `Err` if `min > max`.
+    ///
+    /// Use this when the range values come from dynamic input. For
+    /// known-valid static values, prefer [`MonthConfig::with_range`].
+    pub fn try_with_range(self, min: u8, max: u8) -> Result<Self, ConfigRangeError> {
+        if min > max {
+            return Err(ConfigRangeError::MinExceedsMax {
+                min: min as i32,
+                max: max as i32,
+            });
+        }
+        Ok(MonthConfig { min, max, ..self })
+    }
+
+    /// Set whether a month component is expected in the input.
+    ///
+    /// ```
+    /// use partial_date::models::{IsExpected, MonthConfig};
+    ///
+    /// let config = MonthConfig::default().with_expected(IsExpected::Yes);
+    /// ```
+    pub fn with_expected(self, expected: IsExpected) -> Self {
+        MonthConfig { expected, ..self }
+    }
+
+    /// Set the default month value to use when no month is found in the input.
+    ///
+    /// ```
+    /// use partial_date::models::MonthConfig;
+    ///
+    /// let config = MonthConfig::default().with_default(1);
+    /// ```
+    pub fn with_default(self, default: u8) -> Self {
+        MonthConfig {
+            default: Some(default),
+            ..self
+        }
+    }
+}
+
 /// The pivot point for a [`TwoDigitYearExpansion::SlidingWindow`].
 ///
 /// A valid pivot is in the range `1–99`. A pivot of `p` means two-digit
@@ -199,21 +329,48 @@ impl Default for MonthConfig {
 ///
 /// # Construction
 ///
-/// Use [`SlidingWindowPivot::new`] or [`TryFrom<u8>`]:
+/// Use [`SlidingWindowPivot::new`] for known-valid static values (panics on
+/// invalid input) or [`SlidingWindowPivot::try_new`] when the value comes
+/// from dynamic input and you need to handle the error:
 ///
 /// ```
 /// use partial_date::models::SlidingWindowPivot;
 ///
-/// let pivot = SlidingWindowPivot::new(50).unwrap();
+/// // Known-valid — panics if the value is invalid.
+/// let pivot = SlidingWindowPivot::new(50);
+///
+/// // Dynamic input — returns Result.
+/// let pivot = SlidingWindowPivot::try_new(50).unwrap();
+///
+/// // Via TryFrom.
 /// let pivot: SlidingWindowPivot = 50_u8.try_into().unwrap();
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlidingWindowPivot(u8);
 
 impl SlidingWindowPivot {
-    /// Create a new `SlidingWindowPivot`, returning `Err` if `pivot` is `0` or
-    /// greater than `99`.
-    pub fn new(pivot: u8) -> Result<Self, SlidingWindowPivotError> {
+    /// Create a new `SlidingWindowPivot`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `pivot` is `0` or greater than `99`. Use
+    /// [`SlidingWindowPivot::try_new`] when the value comes from dynamic input
+    /// and you need to handle the error instead of panicking.
+    pub fn new(pivot: u8) -> Self {
+        assert!(
+            pivot > 0 && pivot <= 99,
+            "SlidingWindowPivot must be in the range 1–99, got {pivot}"
+        );
+        SlidingWindowPivot(pivot)
+    }
+
+    /// Create a new `SlidingWindowPivot`, returning `Err` if `pivot` is `0`
+    /// or greater than `99`.
+    ///
+    /// Use this when the pivot value comes from dynamic input (e.g. user
+    /// configuration, a config file). For known-valid static values, prefer
+    /// [`SlidingWindowPivot::new`].
+    pub fn try_new(pivot: u8) -> Result<Self, SlidingWindowPivotError> {
         if pivot == 0 || pivot > 99 {
             return Err(SlidingWindowPivotError::InvalidPivot(pivot));
         }
@@ -225,7 +382,7 @@ impl TryFrom<u8> for SlidingWindowPivot {
     type Error = SlidingWindowPivotError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        SlidingWindowPivot::new(value)
+        SlidingWindowPivot::try_new(value)
     }
 }
 
@@ -235,7 +392,7 @@ impl From<SlidingWindowPivot> for u8 {
     }
 }
 
-/// Errors returned by [`SlidingWindowPivot::new`] when validation fails.
+/// Errors returned by [`SlidingWindowPivot::try_new`] when validation fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlidingWindowPivotError {
     /// The pivot value must be in the range `1–99`.
@@ -250,21 +407,48 @@ pub enum SlidingWindowPivotError {
 ///
 /// # Construction
 ///
-/// Use [`Century::new`] or [`TryFrom<i32>`]:
+/// Use [`Century::new`] for known-valid static values (panics on invalid
+/// input) or [`Century::try_new`] when the value comes from dynamic input
+/// and you need to handle the error:
 ///
 /// ```
 /// use partial_date::models::Century;
 ///
-/// let century = Century::new(1800).unwrap();
+/// // Known-valid — panics if the value is not a century boundary.
+/// let century = Century::new(1800);
+///
+/// // Dynamic input — returns Result.
+/// let century = Century::try_new(2000).unwrap();
+///
+/// // Via TryFrom.
 /// let century: Century = 2000_i32.try_into().unwrap();
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Century(i32);
 
 impl Century {
+    /// Create a new `Century`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `year` is not divisible by `100`. Use [`Century::try_new`]
+    /// when the value comes from dynamic input and you need to handle the
+    /// error instead of panicking.
+    pub fn new(year: i32) -> Self {
+        assert!(
+            year % 100 == 0,
+            "Century must be divisible by 100, got {year}"
+        );
+        Century(year)
+    }
+
     /// Create a new `Century`, returning `Err` if `year` is not divisible by
     /// `100`.
-    pub fn new(year: i32) -> Result<Self, CenturyError> {
+    ///
+    /// Use this when the year value comes from dynamic input (e.g. user
+    /// configuration, a config file). For known-valid static values, prefer
+    /// [`Century::new`].
+    pub fn try_new(year: i32) -> Result<Self, CenturyError> {
         if year % 100 != 0 {
             return Err(CenturyError::NotACenturyBoundary(year));
         }
@@ -276,7 +460,7 @@ impl TryFrom<i32> for Century {
     type Error = CenturyError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
-        Century::new(value)
+        Century::try_new(value)
     }
 }
 
@@ -286,7 +470,7 @@ impl From<Century> for i32 {
     }
 }
 
-/// Errors returned by [`Century::new`] when validation fails.
+/// Errors returned by [`Century::try_new`] when validation fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CenturyError {
     /// The year value must be divisible by `100` (e.g. `1800`, `2000`).
@@ -325,13 +509,13 @@ pub enum TwoDigitYearExpansion {
     /// // 00–49 → 2000–2049, 50–99 → 1950–1999 (the default).
     /// let expansion = TwoDigitYearExpansion::SlidingWindow {
     ///     earliest_year: 1950,
-    ///     pivot: SlidingWindowPivot::new(50).unwrap(),
+    ///     pivot: SlidingWindowPivot::new(50),
     /// };
     ///
     /// // Industrial Revolution era: 00–49 → 1800–1849, 50–99 → 1750–1799.
     /// let expansion = TwoDigitYearExpansion::SlidingWindow {
     ///     earliest_year: 1750,
-    ///     pivot: SlidingWindowPivot::new(50).unwrap(),
+    ///     pivot: SlidingWindowPivot::new(50),
     /// };
     /// ```
     SlidingWindow {
@@ -355,10 +539,10 @@ pub enum TwoDigitYearExpansion {
     /// use partial_date::models::{Century, TwoDigitYearExpansion};
     ///
     /// // All two-digit years are in the 2000s: 00 → 2000, 34 → 2034.
-    /// let expansion = TwoDigitYearExpansion::Always(Century::new(2000).unwrap());
+    /// let expansion = TwoDigitYearExpansion::Always(Century::new(2000));
     ///
     /// // All two-digit years are in the 1800s: 00 → 1800, 34 → 1834.
-    /// let expansion = TwoDigitYearExpansion::Always(Century::new(1800).unwrap());
+    /// let expansion = TwoDigitYearExpansion::Always(Century::new(1800));
     /// ```
     Always(Century),
     /// Return the two-digit value literally (e.g. `24` stays as `24`).
@@ -476,6 +660,108 @@ impl Default for YearConfig {
             default: None,
             two_digit_expansion: TwoDigitYearExpansion::default(),
             single_digit_year_expansion: false,
+        }
+    }
+}
+
+impl YearConfig {
+    /// Set the valid year range.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min > max`. Use [`YearConfig::try_with_range`] when the
+    /// values come from dynamic input and you need to handle the error.
+    ///
+    /// ```
+    /// use partial_date::models::YearConfig;
+    ///
+    /// let config = YearConfig::default().with_range(1760, 1840);
+    /// ```
+    pub fn with_range(self, min: i32, max: i32) -> Self {
+        assert!(
+            min <= max,
+            "YearConfig::with_range min ({min}) must not exceed max ({max})"
+        );
+        YearConfig { min, max, ..self }
+    }
+
+    /// Set the valid year range, returning `Err` if `min > max`.
+    ///
+    /// Use this when the range values come from dynamic input. For
+    /// known-valid static values, prefer [`YearConfig::with_range`].
+    pub fn try_with_range(self, min: i32, max: i32) -> Result<Self, ConfigRangeError> {
+        if min > max {
+            return Err(ConfigRangeError::MinExceedsMax { min, max });
+        }
+        Ok(YearConfig { min, max, ..self })
+    }
+
+    /// Set whether a year component is expected in the input.
+    ///
+    /// ```
+    /// use partial_date::models::{IsExpected, YearConfig};
+    ///
+    /// let config = YearConfig::default().with_expected(IsExpected::Yes);
+    /// ```
+    pub fn with_expected(self, expected: IsExpected) -> Self {
+        YearConfig { expected, ..self }
+    }
+
+    /// Set the default year value to use when no year is found in the input.
+    ///
+    /// ```
+    /// use partial_date::models::YearConfig;
+    ///
+    /// let config = YearConfig::default().with_default(2025);
+    /// ```
+    pub fn with_default(self, default: i32) -> Self {
+        YearConfig {
+            default: Some(default),
+            ..self
+        }
+    }
+
+    /// Set the two-digit year expansion strategy.
+    ///
+    /// ```
+    /// use partial_date::models::{
+    ///     Century, SlidingWindowPivot, TwoDigitYearExpansion, YearConfig,
+    /// };
+    ///
+    /// // All two-digit years map to the 2000s.
+    /// let config = YearConfig::default()
+    ///     .with_two_digit_expansion(TwoDigitYearExpansion::Always(Century::new(2000)));
+    ///
+    /// // Industrial Revolution era window.
+    /// let config = YearConfig::default()
+    ///     .with_range(1760, 1840)
+    ///     .with_two_digit_expansion(TwoDigitYearExpansion::SlidingWindow {
+    ///         earliest_year: 1750,
+    ///         pivot: SlidingWindowPivot::new(50),
+    ///     });
+    /// ```
+    pub fn with_two_digit_expansion(self, two_digit_expansion: TwoDigitYearExpansion) -> Self {
+        YearConfig {
+            two_digit_expansion,
+            ..self
+        }
+    }
+
+    /// Set whether single-digit tokens are expanded as two-digit years.
+    ///
+    /// When `true`, a single-digit token (e.g. `5`) is treated as `05` and
+    /// then expanded according to the configured
+    /// [`YearConfig::two_digit_expansion`] strategy.
+    ///
+    /// ```
+    /// use partial_date::models::YearConfig;
+    ///
+    /// let config = YearConfig::default().with_single_digit_expansion(true);
+    /// ```
+    pub fn with_single_digit_expansion(self, enabled: bool) -> Self {
+        YearConfig {
+            single_digit_year_expansion: enabled,
+            ..self
         }
     }
 }
@@ -598,6 +884,7 @@ pub struct Config {
     ///
     /// Default: `true`.
     pub letter_o_substitution: bool,
+    //TODO: Add a Config section for fuzzy matching options, include letter o substitution in that config
 }
 
 impl Default for Config {
@@ -610,6 +897,109 @@ impl Default for Config {
             no_separator: false,
             extra_separators: Vec::new(),
             letter_o_substitution: true,
+        }
+    }
+}
+
+impl Config {
+    /// Set the day extraction configuration.
+    ///
+    /// ```
+    /// use partial_date::models::{Config, DayConfig, IsExpected};
+    ///
+    /// let config = Config::default()
+    ///     .with_day(DayConfig::default().with_range(1, 28).with_expected(IsExpected::Yes));
+    /// ```
+    pub fn with_day(self, day: DayConfig) -> Self {
+        Config { day, ..self }
+    }
+
+    /// Set the month extraction configuration.
+    ///
+    /// ```
+    /// use partial_date::models::{Config, IsExpected, MonthConfig};
+    ///
+    /// let config = Config::default()
+    ///     .with_month(MonthConfig::default().with_expected(IsExpected::Yes));
+    /// ```
+    pub fn with_month(self, month: MonthConfig) -> Self {
+        Config { month, ..self }
+    }
+
+    /// Set the year extraction configuration.
+    ///
+    /// ```
+    /// use partial_date::models::{Config, IsExpected, YearConfig};
+    ///
+    /// let config = Config::default()
+    ///     .with_year(YearConfig::default().with_range(1760, 1840).with_expected(IsExpected::Yes));
+    /// ```
+    pub fn with_year(self, year: YearConfig) -> Self {
+        Config { year, ..self }
+    }
+
+    /// Set the expected ordering of date components for positional inputs.
+    ///
+    /// ```
+    /// use partial_date::models::{ComponentOrder, Config, DateComponent};
+    ///
+    /// let config = Config::default().with_component_order(
+    ///     ComponentOrder::new(
+    ///         DateComponent::Month,
+    ///         DateComponent::Day,
+    ///         DateComponent::Year,
+    ///     )
+    ///     .unwrap(),
+    /// );
+    /// ```
+    pub fn with_component_order(self, component_order: ComponentOrder) -> Self {
+        Config {
+            component_order,
+            ..self
+        }
+    }
+
+    /// Enable or disable no-separator parsing (e.g. `"25122024"`).
+    ///
+    /// ```
+    /// use partial_date::models::Config;
+    ///
+    /// let config = Config::default().with_no_separator(true);
+    /// ```
+    pub fn with_no_separator(self, no_separator: bool) -> Self {
+        Config {
+            no_separator,
+            ..self
+        }
+    }
+
+    /// Set additional custom separator strings to try alongside the standard
+    /// set (`/`, `-`, `.`, `,`, `\`, and whitespace).
+    ///
+    /// ```
+    /// use partial_date::models::Config;
+    ///
+    /// let config = Config::default()
+    ///     .with_extra_separators(vec!["||".to_string(), " - ".to_string()]);
+    /// ```
+    pub fn with_extra_separators(self, extra_separators: Vec<String>) -> Self {
+        Config {
+            extra_separators,
+            ..self
+        }
+    }
+
+    /// Enable or disable substitution of the letter `O` for the digit `0`.
+    ///
+    /// ```
+    /// use partial_date::models::Config;
+    ///
+    /// let config = Config::default().with_letter_o_substitution(false);
+    /// ```
+    pub fn with_letter_o_substitution(self, letter_o_substitution: bool) -> Self {
+        Config {
+            letter_o_substitution,
+            ..self
         }
     }
 }

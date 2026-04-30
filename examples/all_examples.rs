@@ -310,7 +310,7 @@ fn example_11_year_two_digit_always_2000s() {
             },
             year: YearConfig {
                 expected: IsExpected::Yes,
-                two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000).unwrap()),
+                two_digit_expansion: TwoDigitYearExpansion::Always(Century::new(2000)),
                 ..Default::default()
             },
             ..Default::default()
@@ -661,7 +661,7 @@ fn example_22_all_component_orders() {
                     expected: IsExpected::Yes,
                     two_digit_expansion: TwoDigitYearExpansion::SlidingWindow {
                         earliest_year: 1950,
-                        pivot: SlidingWindowPivot::new(50).unwrap(),
+                        pivot: SlidingWindowPivot::new(50),
                     },
                     ..Default::default()
                 },
