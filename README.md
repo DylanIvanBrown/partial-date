@@ -1,5 +1,7 @@
 # partial-date
 
+[![docs.rs](https://docs.rs/partial-date/badge.svg)](https://docs.rs/partial-date)
+
 Deterministic partial date extraction from natural language text.
 
 Unlike full-date parsers, `partial-date` is designed for inputs where only *some* of the date is present. A string like `"June 2024"` or `"the 15th"` or `"22-03-16"` will each yield whatever components could be determined, with the rest marked `NotFound`. Missing components can optionally be filled with caller-supplied defaults.
